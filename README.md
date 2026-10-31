@@ -1,9 +1,9 @@
 # Feishu Wiki Sync
 
 > [!NOTE]
-> **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**，不是官方发布渠道。在上游 0.1.2 的基础上做了若干增强（见 [与上游的差异](#与上游的差异)）；感谢上游作者的工作。上游 Release 页只有上游版本，本仓库的构建安装方式见下文「从源码构建」。
+> **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**，不是官方发布渠道。在上游 0.1.2 的基础上做了若干增强（见 [与上游的差异](#与上游的差异)）；感谢上游作者的工作。本仓库的 [Releases 页面](https://github.com/wsa0227/feishu-sync-double/releases)提供二开版本的安装包。
 
-将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.1.2**；上游 [0.1.2 发布页](https://github.com/chenqaq123/ObsidianSync/releases/tag/0.1.2)。
+将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.0**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
 
 仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入，也没有发布到 Obsidian 社区插件市场。
 
@@ -21,6 +21,9 @@
 - **添加知识库向导**：新命令「添加知识库」——粘贴任意 `/wiki/` 链接（节点页或 `/wiki/space/<id>` 空间页）或裸节点令牌，自动解析空间与节点，**一次确认**同步范围（节点子树 / 空间顶层）、本地目录（自动建议 `飞书同步/<空间名>`，可改）与同步档位，完成即进入首次预览。全程不需要理解 `space_id`。
 - **多目标与同步档位**：支持多个同步目标（每个 = 空间 + 根节点 + 本地目录 + 档位），命令「切换同步目标」模糊搜索切换，状态栏显示当前目标与方向。三档位：**仅拉取（镜像）**（冲突默认远端覆盖本地、本地旧版自动另存副本；误推保护；本地是缓存语义）、**双向协作**（冲突保留双方）、**仅推送**。旧配置自动迁移为单一默认目标。
 - 保留上游的同步安全防护（远端列表异常即停、预览保护、冲突副本等）与离线 e2e 测试，并新增容器同步、bookmark、附件目录、镜像档与重对齐等场景。
+- **知识库面板与更新检查**：右下角状态栏打开管理面板，列出全部知识库；"检查更新"只探测不拉取（git fetch 语义），有更新先标识，再选择单库拉取或一键拉取全部更新；定时探测默认关闭。
+- **单篇云文档同步**：粘贴别人分享的 `/docx/` 链接即可只同步这一篇（仅拉取），高亮块转 Obsidian callout、引用块转原文链接，作者更新可跟进。
+- **设置页分组**：应用与授权等一次性配置收入默认收起的抽屉；新增"重新授权飞书账号"命令。
 
 ## 隐私与网络访问
 
@@ -44,9 +47,9 @@
 
 ### 使用构建好的安装包
 
-> 上游 Release 提供的是上游版本的安装包，不含本仓库的二开改动；需要二开版本时请按下方「从源码构建」自行构建，或 `npm run install:vault` 直装。
+从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.0`）：
 
-1. 从 [0.1.2 Release](https://github.com/chenqaq123/ObsidianSync/releases/tag/0.1.2) 下载并解压 `feishu-wiki-sync-0.1.2.zip`，得到 `feishu-wiki-sync` 文件夹。
+1. 下载并解压 `feishu-wiki-sync-0.2.0.zip`，得到 `feishu-wiki-sync` 文件夹。
 2. 关闭 Obsidian，将该文件夹放入目标仓库的 `.obsidian/plugins/` 下。最终应为：
 
    ```text
@@ -79,7 +82,7 @@ dist/
 │   ├── main.js
 │   ├── manifest.json
 │   └── styles.css
-├── feishu-wiki-sync-0.1.2.zip
+├── feishu-wiki-sync-0.2.0.zip
 └── SHA256SUMS
 ```
 

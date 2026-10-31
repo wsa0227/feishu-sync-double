@@ -41,7 +41,10 @@ const PluginClass = context.module.exports.default;
 assert.equal(typeof PluginClass, "function");
 const plugin = new PluginClass();
 await plugin.onload();
-assert.deepEqual(plugin.commands.map(command => command.id).sort(), ["force-push", "preview-plan", "sync-both", "sync-pull", "sync-push"]);
+assert.deepEqual(
+  plugin.commands.map(command => command.id).sort(),
+  ["add-wiki", "check-updates", "force-push", "preview-plan", "reauthorize", "switch-target", "sync-both", "sync-pull", "sync-push"],
+);
 assert.equal(plugin.settings.showPlanBeforeSync, true);
 assert.equal(plugin.settings.autoSyncMinutes, 0);
 assert.equal(plugin.settings.propagateLocalDelete, false);
