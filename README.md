@@ -1,10 +1,24 @@
 # Feishu Wiki Sync
 
-将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.1.2**；[下载安装包](https://github.com/chenqaq123/ObsidianSync/releases/tag/0.1.2)。
+> [!NOTE]
+> **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**，不是官方发布渠道。在上游 0.1.2 的基础上做了若干增强（见 [与上游的差异](#与上游的差异)）；感谢上游作者的工作。上游 Release 页只有上游版本，本仓库的构建安装方式见下文「从源码构建」。
+
+将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.1.2**；上游 [0.1.2 发布页](https://github.com/chenqaq123/ObsidianSync/releases/tag/0.1.2)。
 
 仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入，也没有发布到 Obsidian 社区插件市场。
 
 从 0.1.2 起，以本轮核验的官方稳定版 1.13.7 作为支持基线，不再承诺尚未验证的 1.4.0 兼容性。历史版本及其标签保留。
+
+## 与上游的差异
+
+本仓库相对 [上游 0.1.2](https://github.com/chenqaq123/ObsidianSync/releases/tag/0.1.2) 的主要增强（均为文档模式）：
+
+- **容器文档正文同步（folder-note 风格）**："有子页面的页面"自身的正文也会拉取为笔记，并放进与它同名的文件夹里（例如 `Day01. LangChain/Day01. LangChain.md`），本地树形与飞书一致；空的目录页面仍只当作目录，作者事后补写正文也能在下一轮自动拉取。
+- **bookmark 书签块转链接**：新增下行规则 `bookmark-to-link`，把飞书的 `<bookmark …>` 网页书签块转成标准 Markdown 链接 `[标题](网址)`，不再在笔记里残留无法渲染的标签。
+- **附件目录收进同步根目录**：文档模式的图片附件保存在 `本地同步目录/attachments/` 下（例如 `飞书同步/RAG智能体开发/attachments/`），跟随本次同步的根目录，而不是 vault 根目录。
+- **首次对接不再误报带图冲突**：计划期与本地内容的比较按图片素材槽位归一，只拉取时重新对接带图文档不会再被误判成"两边内容不同"。
+- **同名目录与同名笔记可共存**：路径撞车消解在空目录剔除之后进行，`X/` 目录与 `X.md` 笔记并存不再被误判为"远端路径歧义"。
+- 保留上游的同步安全防护（远端列表异常即停、预览保护、冲突副本等）与离线 e2e 测试，并新增容器同步、bookmark、附件目录与重对齐等场景。
 
 ## 隐私与网络访问
 
@@ -27,6 +41,8 @@
 ## 安装
 
 ### 使用构建好的安装包
+
+> 上游 Release 提供的是上游版本的安装包，不含本仓库的二开改动；需要二开版本时请按下方「从源码构建」自行构建，或 `npm run install:vault` 直装。
 
 1. 从 [0.1.2 Release](https://github.com/chenqaq123/ObsidianSync/releases/tag/0.1.2) 下载并解压 `feishu-wiki-sync-0.1.2.zip`，得到 `feishu-wiki-sync` 文件夹。
 2. 关闭 Obsidian，将该文件夹放入目标仓库的 `.obsidian/plugins/` 下。最终应为：
@@ -152,4 +168,6 @@ App Secret 和授权令牌保存在本仓库 `.obsidian/plugins/feishu-wiki-sync
 
 ## 许可证与致谢
 
-本项目采用 [MIT License](LICENSE)，是独立社区插件，与 Obsidian、飞书或 Lark 无官方隶属关系。飞书文档和图片接口实现参考了 [Lark CLI](https://github.com/larksuite/cli) 的请求格式与素材处理流程；上游版权及许可见 [第三方声明](THIRD_PARTY_NOTICES.md)，声明同时保留在发布的 `main.js` 中。构建工具和类型声明不打入插件运行文件。
+本项目采用 [MIT License](LICENSE)，是独立社区插件，与 Obsidian、飞书或 Lark 无官方隶属关系。
+
+本仓库基于 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync)（MIT）二次开发，继承其许可证与版权声明，感谢上游作者的工作。飞书文档和图片接口实现参考了 [Lark CLI](https://github.com/larksuite/cli) 的请求格式与素材处理流程；上游版权及许可见 [第三方声明](THIRD_PARTY_NOTICES.md)，声明同时保留在发布的 `main.js` 中。构建工具和类型声明不打入插件运行文件。
