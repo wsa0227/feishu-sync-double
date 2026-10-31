@@ -28,12 +28,12 @@ export class Logger {
 
   warn(message: string): void {
     this.write("WARN", message);
-    console.warn("[feishu-wiki-sync]", message);
+    console.warn("[feishu-sync-double]", message);
   }
 
   error(message: string): void {
     this.write("ERROR", message);
-    console.error("[feishu-wiki-sync]", message);
+    console.error("[feishu-sync-double]", message);
   }
 
   debug(message: string): void {
@@ -43,7 +43,7 @@ export class Logger {
   private write(level: string, message: string): void {
     const line = `${new Date().toISOString()} ${level} ${message}`;
     if (this.verbose()) {
-      if (level !== "WARN" && level !== "ERROR") console.debug("[feishu-wiki-sync]", line);
+      if (level !== "WARN" && level !== "ERROR") console.debug("[feishu-sync-double]", line);
       this.pending.push(line);
     }
   }
@@ -63,7 +63,7 @@ export class Logger {
       const merged = `${existing}${lines.join("\n")}\n`;
       await adapter.write(path, merged.length > MAX_LOG_BYTES ? merged.slice(merged.length - MAX_LOG_BYTES) : merged);
     } catch (error) {
-      console.warn("[feishu-wiki-sync] failed to write log", error);
+      console.warn("[feishu-sync-double] failed to write log", error);
     }
   }
 }

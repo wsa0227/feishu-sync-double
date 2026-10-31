@@ -1,6 +1,27 @@
 # Obsidian 社区插件提交准备
 
-核验日期：2026-10-01。准备版本：`0.1.2`。当前仅完成仓库和 Release 准备，尚未提交或获批官方目录。
+> **二开版本提交（2026-10-31）：** 上游 `feishu-wiki-sync`（chenqaq123/ObsidianSync）已收录于官方目录，ID 与名称均被占用。本仓库二开版本以**新 ID `feishu-sync-double`**、名称 **Feishu Wiki Sync Double**、作者 **wsa0227** 作为新插件提交，PR/提交说明中声明 fork 关系与实质新增功能（多目标面板、更新检查、单篇文档同步等）。准备版本：`0.2.1`。本文其余章节为上游 0.1.2 的历史提交准备记录，保留备查。
+
+## 二开版本（feishu-sync-double）提交清单
+
+1. manifest 已更新：id `feishu-sync-double`、name `Feishu Wiki Sync Double`、author `wsa0227`（含 authorUrl）、description 为英文并声明 fork 来源。
+2. `npm run package` 产出 `dist/feishu-sync-double/`（三件套）与 `feishu-sync-double-0.2.1.zip`。
+3. GitHub Release：tag `0.2.1`（Target main），附件上传 `main.js`、`manifest.json`、`styles.css`、zip、`SHA256SUMS`。
+4. 提交入口：登录 [community.obsidian.md](https://community.obsidian.md) 并绑定 GitHub 账号 wsa0227 → Plugins → New plugin → Repository `wsa0227/feishu-sync-double`。备选 PR 通道：fork obsidianmd/obsidian-releases，在 `community-plugins.json` 按字母序插入：
+
+```json
+{
+  "id": "feishu-sync-double",
+  "name": "Feishu Wiki Sync Double",
+  "author": "wsa0227",
+  "description": "Sync Obsidian notes with multiple Feishu wikis: follow shared wikis and single documents, track updates, pull changes with one click, and publish your notes as Feishu docs. Enhanced fork of feishu-wiki-sync.",
+  "repo": "wsa0227/feishu-sync-double",
+  "branch": "main"
+}
+```
+
+注意 `branch: "main"` 不能省（官方默认找 master）。审核中可能被问到的点与回答：本地 7634 端口回调服务仅在授权期间开启；App Secret 为用户自建应用的自身凭证、仅存本地 data.json（README 隐私节已披露）；`docs_ai` 是飞书官方文档转换接口，非插件内置 LLM；上传内容范围见 README 隐私节。
+
 
 ## 本轮调整
 

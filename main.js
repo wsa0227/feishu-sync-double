@@ -951,11 +951,11 @@ var Logger = class {
   }
   warn(message) {
     this.write("WARN", message);
-    console.warn("[feishu-wiki-sync]", message);
+    console.warn("[feishu-sync-double]", message);
   }
   error(message) {
     this.write("ERROR", message);
-    console.error("[feishu-wiki-sync]", message);
+    console.error("[feishu-sync-double]", message);
   }
   debug(message) {
     if (this.verbose())
@@ -965,7 +965,7 @@ var Logger = class {
     const line = `${(/* @__PURE__ */ new Date()).toISOString()} ${level} ${message}`;
     if (this.verbose()) {
       if (level !== "WARN" && level !== "ERROR")
-        console.debug("[feishu-wiki-sync]", line);
+        console.debug("[feishu-sync-double]", line);
       this.pending.push(line);
     }
   }
@@ -985,7 +985,7 @@ var Logger = class {
 `;
       await adapter.write(path, merged.length > MAX_LOG_BYTES ? merged.slice(merged.length - MAX_LOG_BYTES) : merged);
     } catch (error) {
-      console.warn("[feishu-wiki-sync] failed to write log", error);
+      console.warn("[feishu-sync-double] failed to write log", error);
     }
   }
 };

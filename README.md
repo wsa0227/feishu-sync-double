@@ -3,9 +3,9 @@
 > [!NOTE]
 > **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**，不是官方发布渠道。在上游 0.1.2 的基础上做了若干增强；感谢上游作者的工作。本仓库的 [Releases 页面](https://github.com/wsa0227/feishu-sync-double/releases)提供二开版本的安装包。
 
-将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.0**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
+将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.1**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
 
-仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入，也没有发布到 Obsidian 社区插件市场。
+仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入。上游版本已上架 Obsidian 社区插件市场；本二开版本以独立 ID `feishu-sync-double` 提交上架中。
 
 ## 为什么做这件事
 
@@ -60,7 +60,7 @@
 - 单篇 `/docx/` 文档：拉取、图片本地化、callout/cite 转换、更新跟进
 - 三档位方向控制（仅拉取/双向/仅推送）加误推拦截
 - 设置页分组：授权等一次性配置收进抽屉，授权失效一键重授权
-- `0.2.0` 已发布 [Release](https://github.com/wsa0227/feishu-sync-double/releases)
+- `0.2.1` 已发布 [Release](https://github.com/wsa0227/feishu-sync-double/releases)
 
 还没做的：
 
@@ -75,7 +75,7 @@
 
 快速上手：
 
-1. 从 [Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载 `feishu-wiki-sync-0.2.0.zip`，解压到 `.obsidian/plugins/`，启用插件
+1. 从 [Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载 `feishu-sync-double-0.2.1.zip`，解压到 `.obsidian/plugins/`，启用插件
 2. 在飞书开放平台建一个自建应用并授权（一次性，约 5-10 分钟）
 3. 点右下角状态栏 → **添加知识库** → 粘贴链接
 
@@ -105,7 +105,7 @@
 - **账户与费用**：插件本身免费，无广告或付费解锁；需要飞书账号、企业自建应用及目标知识库的访问权限。飞书自身的服务费用、容量和 API 配额由飞书决定。
 - **联网范围**：`accounts.feishu.cn` 用于浏览器登录、授权和刷新令牌；`open.feishu.cn` 用于知识库、文档、文件及图片 API。下载可能由飞书重定向至其素材服务。文档中的外部图片链接会随正文发送给飞书，飞书可能按其规则加载这些链接。
 - **上传内容**：同步范围内笔记的标题、目录与正文会传给所配置的飞书知识库；文档模式还上传笔记引用的本地图片。排除规则可缩小范围；第一次同步前应检查预览。文档会由飞书云服务处理和存储，包括文档模式使用的 `docs_ai` 接口。
-- **本地存储**：App Secret、用户令牌和同步映射通过 Obsidian 插件配置保存，默认位置为 `.obsidian/plugins/feishu-wiki-sync/data.json`，未额外加密。自定义配置目录时，`data.json` 随 Obsidian 的配置目录存放；规则、冲突副本和调试日志仍位于仓库内 `.obsidian/feishu-sync/`。日志可能含笔记路径和接口错误信息，分享前请检查。
+- **本地存储**：App Secret、用户令牌和同步映射通过 Obsidian 插件配置保存，默认位置为 `.obsidian/plugins/feishu-sync-double/data.json`，未额外加密。自定义配置目录时，`data.json` 随 Obsidian 的配置目录存放；规则、冲突副本和调试日志仍位于仓库内 `.obsidian/feishu-sync/`。日志可能含笔记路径和接口错误信息，分享前请检查。
 - **回调和文件访问**：自动授权临时监听本机回调端口，完成、取消或超时后关闭。插件运行时读写仓库内的笔记、附件与上述配置文件，不主动扫描仓库外的文件；“打开规则文件”仅将仓库内的规则文件交给系统默认程序。
 - **数据收集**：插件没有开发者后台，不收集或发送遥测、统计及广告数据；不会自行安装或更新插件或依赖。联网同步仅用于用户配置的飞书服务。撤销本地授权不会删除飞书中已同步的文档。
 
@@ -122,23 +122,25 @@
 
 ### 使用构建好的安装包
 
-从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.0`）：
+从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.1`）：
 
-1. 下载并解压 `feishu-wiki-sync-0.2.0.zip`，得到 `feishu-wiki-sync` 文件夹。
+1. 下载并解压 `feishu-sync-double-0.2.1.zip`，得到 `feishu-sync-double` 文件夹。
 2. 关闭 Obsidian，将该文件夹放入目标仓库的 `.obsidian/plugins/` 下。最终应为：
 
    ```text
    你的仓库/
    └── .obsidian/
        └── plugins/
-           └── feishu-wiki-sync/
+           └── feishu-sync-double/
                ├── main.js
                ├── manifest.json
                └── styles.css
    ```
 
-3. 重启 Obsidian，在 **设置 → 第三方插件** 中关闭限制模式，启用 **Feishu Wiki Sync**。
+3. 重启 Obsidian，在 **设置 → 第三方插件** 中关闭限制模式，启用 **Feishu Wiki Sync Double**。
 4. 后续的授权与添加知识库步骤见 [docs/使用步骤.md](docs/使用步骤.md)。
+
+> 从旧版（`feishu-wiki-sync` 手动安装）升级：插件文件夹名变了，把旧文件夹 `data.json` 复制到新文件夹即可保留全部知识库配置与同步进度；`.obsidian/feishu-sync/`（规则与冲突副本）不受影响。
 
 ### 从源码构建
 
@@ -153,11 +155,11 @@ npm run package
 
 ```text
 dist/
-├── feishu-wiki-sync/
+├── feishu-sync-double/
 │   ├── main.js
 │   ├── manifest.json
 │   └── styles.css
-├── feishu-wiki-sync-0.2.0.zip
+├── feishu-sync-double-0.2.1.zip
 └── SHA256SUMS
 ```
 
@@ -171,7 +173,7 @@ npm run install:vault -- "/完整路径/你的仓库"
 
 脚本会先构建，再检查仓库是否已有 `.obsidian` 目录，备份原有的三个安装文件到插件目录内的 `.backup-时间戳/`，最后替换文件；账号、映射与规则不变。没有指定路径时直接报错，不会猜测安装位置。也支持通过 `OBSIDIAN_VAULT` 指定仓库；自定义 Obsidian 配置目录可使用 `OBSIDIAN_CONFIG_DIR`（相对仓库路径）。
 
-发布时必须让 GitHub Release 标签与 `manifest.json` 的 `version` 完全一致（例如 `0.2.0`），并分别上传 `main.js`、`manifest.json`、`styles.css`；ZIP 供手动安装使用，不能替代这三个附件。以后更新需同步修改 `package.json`、锁文件、`manifest.json` 和 `versions.json`，重新构建后创建新版本。发布元数据可用 `node scripts/check-release.mjs <版本号>` 预先校验。
+发布时必须让 GitHub Release 标签与 `manifest.json` 的 `version` 完全一致（例如 `0.2.1`），并分别上传 `main.js`、`manifest.json`、`styles.css`；ZIP 供手动安装使用，不能替代这三个附件。以后更新需同步修改 `package.json`、锁文件、`manifest.json` 和 `versions.json`，重新构建后创建新版本。发布元数据可用 `node scripts/check-release.mjs <版本号>` 预先校验。
 
 ## 与上游的差异
 
