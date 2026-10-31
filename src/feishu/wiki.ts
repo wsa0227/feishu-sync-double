@@ -121,7 +121,13 @@ export async function walkWikiTree(
   client: FeishuClient,
   spaceId: string,
   rootNodeToken: string | undefined,
-  options: { rootContainerNode?: string; rootEntry?: WikiTreeEntry; onProgress?: (visited: number, relDir: string) => void } = {},
+  options: {
+    rootContainerNode?: string;
+    rootEntry?: WikiTreeEntry;
+    onProgress?: (visited: number, relDir: string) => void;
+    /** 二开：遇到不会参与同步的非 Markdown 文件节点时回调（两种模式都不处理它，供覆盖面统计） */
+    onSkippedNonMarkdown?: (node: WikiNode) => void;
+  } = {},
 ): Promise<WikiTreeEntry[]> {
   const entries: WikiTreeEntry[] = options.rootEntry ? [options.rootEntry] : [];
   // rootNodeToken 为空表示以知识空间顶层为根
@@ -140,7 +146,11 @@ export async function walkWikiTree(
       if (visited.has(node.node_token)) continue;
       visited.add(node.node_token);
       if (node.obj_type === "file") {
-        if (!/\.md$/i.test(title)) continue;
+        if (!/\.md$/i.test(title)) {
+          // 二开：非 Markdown 文件节点两种模式都不处理，回调给调用方做覆盖面统计
+          options.onSkippedNonMarkdown?.(node);
+          continue;
+        }
         entries.push({
           nodeToken: node.node_token,
           objToken: node.obj_token,

@@ -3,7 +3,7 @@ import { Modal, Setting } from "obsidian";
 import type { PlanDecision } from "../sync/engine";
 import type { PlanItem, SyncAction, SyncPlan } from "../sync/types";
 import { ACTION_LABELS } from "../sync/types";
-import { renderFormatWarnings } from "./format-warnings";
+import { renderFormatWarnings, renderUnsyncedSummary } from "./format-warnings";
 
 const GROUPS: { key: string; title: string; actions: SyncAction[] }[] = [
   { key: "push", title: "会上传到飞书", actions: ["push", "create-remote"] },
@@ -22,6 +22,7 @@ export class PlanModal extends Modal {
     app: App,
     private readonly plan: SyncPlan,
     private readonly resolve: (decision: PlanDecision) => void,
+    private readonly titleSuffix = "",
   ) {
     super(app);
   }
@@ -29,7 +30,7 @@ export class PlanModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "飞书同步计划" });
+    contentEl.createEl("h2", { text: `飞书同步计划${this.titleSuffix}` });
 
     const summary = contentEl.createEl("div", { cls: "feishu-sync-summary" });
     const counts = Object.entries(this.plan.counts)
@@ -43,6 +44,7 @@ export class PlanModal extends Modal {
     if (skipped > 0) {
       summary.createEl("div", { text: `已同步且无变化：${skipped} 篇`, cls: "feishu-sync-reason" });
     }
+    renderUnsyncedSummary(summary, this.plan);
 
     renderFormatWarnings(contentEl, this.plan);
     for (const group of GROUPS) {

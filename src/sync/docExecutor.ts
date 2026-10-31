@@ -484,7 +484,7 @@ export async function executeDocPlan(
             const currentText = await readLocalText(ctx.app, entry.relPath);
             if (currentText !== pulled) {
               localBackupPath = await backupLocalVersion(entry.relPath, currentText);
-              ctx.logger.warn(`镜像档：${entry.relPath} 远端覆盖本地，本地旧版已另存副本 ${localBackupPath}`);
+              ctx.logger.warn(`只读档：${entry.relPath} 远端覆盖本地，本地旧版已另存副本 ${localBackupPath}`);
             }
           }
 
@@ -509,7 +509,7 @@ export async function executeDocPlan(
             action: entry.action,
             ok: true,
             message: localBackupPath
-              ? `${imageWarnings.length > 0 ? imageWarnings.join("；") + "；" : ""}镜像档已用远端覆盖本地，本地旧版副本：${localBackupPath}`
+              ? `${imageWarnings.length > 0 ? imageWarnings.join("；") + "；" : ""}只读档已用远端覆盖本地，本地旧版副本：${localBackupPath}`
               : imageWarnings.length > 0 ? imageWarnings.join("；") : undefined,
           });
           tick(`下载 ${entry.relPath}`);

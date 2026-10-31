@@ -1,5 +1,5 @@
 import type { ConflictPolicy, PluginSettings, SyncDirectionProfile, SyncState, SyncTargetProfile } from "./types";
-import { emptyState } from "./types";
+import { emptyState, normalizeLocalFolder } from "./types";
 
 /**
  * 二开：多目标 Profiles。
@@ -25,7 +25,6 @@ const TARGET_FIELD_KEYS = [
   "attachmentFolder",
   "attachmentLinkStyle",
   "docVerifyRemoteByContent",
-  "autoSyncMinutes",
   "restoreLocalDeleted",
   "recreateRemoteIfDeleted",
   "propagateLocalDelete",
@@ -51,7 +50,6 @@ function snapshotTarget(settings: PluginSettings): SyncTargetProfile["target"] {
     attachmentFolder: settings.attachmentFolder,
     attachmentLinkStyle: settings.attachmentLinkStyle,
     docVerifyRemoteByContent: settings.docVerifyRemoteByContent,
-    autoSyncMinutes: settings.autoSyncMinutes,
     restoreLocalDeleted: settings.restoreLocalDeleted,
     recreateRemoteIfDeleted: settings.recreateRemoteIfDeleted,
     propagateLocalDelete: settings.propagateLocalDelete,
@@ -141,8 +139,27 @@ export function createAndActivateProfile(
   return created;
 }
 
-/** 删除一个目标；删的是激活目标时切到剩余的第一个（没有则重建空的 default）。 */
-export function deleteProfile(settings: PluginSettings, profileId: string): boolean {
+/**
+ * 二开：校验本地目录不与其他知识库重叠（相等或父子包含都算冲突）。
+ * 两个知识库管理同一批本地文件会让映射状态互相覆盖，必须在配置期拒绝。
+ * 返回冲突知识库的名称；无冲突返回 undefined。
+ */
+export function findFolderConflict(settings: PluginSettings, folder: string, excludeProfileId?: string): string | undefined {
+  const candidate = normalizeLocalFolder(folder);
+  for (const profile of settings.profiles ?? []) {
+    if (excludeProfileId && profile.id === excludeProfileId) continue;
+    const other = normalizeLocalFolder(profile.target.localFolder);
+    if (candidate === other) return profile.name;
+    // vault 根目录（空）包含一切非空目录；非空目录之间做父子包含判断
+    if (!candidate && other) return profile.name;
+    if (candidate && other && (candidate.startsWith(`${other}/`) || other.startsWith(`${candidate}/`))) {
+      return profile.name;
+    }
+  }
+  return undefined;
+}
+
+/** 删除一个目标；删的是激活目标时切到剩余的第一个（没有则重建空的 default）。 */export function deleteProfile(settings: PluginSettings, profileId: string): boolean {
   const profiles = settings.profiles ?? [];
   const remaining = profiles.filter((item) => item.id !== profileId);
   if (remaining.length === profiles.length) return false;
@@ -199,7 +216,7 @@ export function suggestLocalFolder(currentLocalFolder: string, knowledgeBaseName
 }
 
 export function directionLabel(direction: SyncDirectionProfile): string {
-  return direction === "pull" ? "仅拉取（镜像）" : direction === "push" ? "仅推送" : "双向协作";
+  return direction === "pull" ? "仅拉取（只读）" : direction === "push" ? "仅推送" : "双向协作";
 }
 
 export function conflictPolicyLabel(policy: ConflictPolicy): string {

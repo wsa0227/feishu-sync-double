@@ -3,7 +3,7 @@ import type { App } from "obsidian";
 import type { AuthManager } from "../feishu/auth";
 import { FeishuClient } from "../feishu/client";
 import { batchQueryMetas, downloadFile } from "../feishu/files";
-import type { WikiSpace } from "../feishu/wiki";
+import type { WikiNode, WikiSpace } from "../feishu/wiki";
 import { getNodeByToken, listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
 import type { Logger } from "../log";
 import type { ReportEntry } from "./executor";
@@ -11,8 +11,8 @@ import { executePlan } from "./executor";
 import { sha256Hex } from "./hash";
 import { buildPlan } from "./planner";
 import { PathFilter, assertSafeVaultPath, readLocalBytes, scanLocalNotes } from "./scanner";
-import type { LocalNote, PluginSettings, RemoteNote, SyncPlan } from "./types";
-import { joinPath, prefixLocalPath } from "./types";
+import type { LocalNote, PluginSettings, RemoteNote, SyncPlan, UnsyncedNodeGroup } from "./types";
+import { countUnsyncedLeafNodes, joinPath, prefixLocalPath } from "./types";
 
 export type SyncMode = "both" | "pull" | "push";
 export type PlanDecision = "all" | "pull-only" | "cancel";
@@ -98,6 +98,9 @@ export class SyncEngine {
 
     const client = this.createClient();
     const logger = this.deps.logger;
+    // 二开：预览一致性校验必须最先做。执行预览过的计划时，任何配置变化都应立刻以
+    // 「请重新预览」拒绝，不能先做根节点解析等网络调用——换目标后那会抛出不相干的接口错误。
+    if (options.preApprovedPlan) assertPlanCurrent(options.preApprovedPlan, settings);
     if (rootNodeToken) {
       const resolved = await resolveWikiRoot(client, rootNodeToken);
       if (resolved) {
@@ -118,7 +121,6 @@ export class SyncEngine {
     if (!spaceId) throw new Error("请先在插件设置里填写知识库 space_id，或提供可访问的 /wiki/ 根节点链接");
     const filter = new PathFilter(settings.excludePatterns);
 
-    if (options.preApprovedPlan) assertPlanCurrent(options.preApprovedPlan, settings);
     if (prepareTarget(settings, spaceId, rootNodeToken ?? "", "md")) {
       logger.warn("同步目标或模式已变更，已清空旧映射，本轮按首次对接判定");
     }
@@ -150,12 +152,26 @@ export class SyncEngine {
         validateLocalPaths(local.keys(), settings);
 
         options.onProgress?.("读取飞书知识库节点树…");
+        const skippedNonMarkdown: WikiNode[] = [];
         const tree = await walkWikiTree(client, spaceId, rootNodeToken, {
           rootContainerNode: settings.state.folders[""]?.nodeToken,
           onProgress: (visited) => {
             if (visited % 50 === 0) options.onProgress?.(`读取飞书知识库节点树…（已见 ${visited} 个节点）`);
           },
+          onSkippedNonMarkdown: (node) => skippedNonMarkdown.push(node),
         });
+        // 二开：覆盖面明示——叶子节点里本模式（文件镜像）不同步的内容，按类型聚合。
+        // 文件镜像只认 .md 文件节点；飞书文档（docx）要切到文档模式才能拉取。
+        const unsyncedCounts = new Map<string, number>();
+        for (const group of countUnsyncedLeafNodes(tree, ["file"])) {
+          unsyncedCounts.set(group.objType, group.count);
+        }
+        if (skippedNonMarkdown.length > 0) {
+          unsyncedCounts.set("file", (unsyncedCounts.get("file") ?? 0) + skippedNonMarkdown.length);
+        }
+        const unsynced: UnsyncedNodeGroup[] = [...unsyncedCounts.entries()]
+          .map(([objType, count]) => ({ objType, count }))
+          .sort((a, b) => b.count - a.count);
         const remote: Map<string, RemoteNote> = new Map();
         const seenPaths = new Map<string, string>();
         for (const entry of tree) {
@@ -231,6 +247,7 @@ export class SyncEngine {
             return hash;
           },
         });
+        plan.unsynced = unsynced.length > 0 ? unsynced : undefined;
         plan = filterPlan(plan, options.mode);
       }
 

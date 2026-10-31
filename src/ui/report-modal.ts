@@ -3,7 +3,7 @@ import { Modal, Setting } from "obsidian";
 import type { ReportEntry } from "../sync/executor";
 import type { SyncAction, SyncPlan } from "../sync/types";
 import { ACTION_LABELS } from "../sync/types";
-import { renderFormatWarnings } from "./format-warnings";
+import { renderFormatWarnings, renderUnsyncedSummary } from "./format-warnings";
 
 export class ReportModal extends Modal {
   constructor(
@@ -11,6 +11,7 @@ export class ReportModal extends Modal {
     private readonly plan: SyncPlan,
     private readonly report: ReportEntry[],
     private readonly executed: boolean,
+    private readonly titleSuffix = "",
   ) {
     super(app);
   }
@@ -18,7 +19,7 @@ export class ReportModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: this.executed ? "飞书同步结果" : "飞书同步计划（未执行）" });
+    contentEl.createEl("h2", { text: `${this.executed ? "飞书同步结果" : "飞书同步计划（未执行）"}${this.titleSuffix}` });
 
     const failed = this.report.filter((entry) => !entry.ok);
     const conflicts = this.report.filter((entry) => entry.action === "conflict");
@@ -33,6 +34,7 @@ export class ReportModal extends Modal {
     if (planCounts) {
       summary.createEl("div", { cls: "feishu-sync-reason", text: `本次计划：${planCounts}` });
     }
+    renderUnsyncedSummary(summary, this.plan);
 
     renderFormatWarnings(contentEl, this.plan);
     renderSection(contentEl, "冲突副本（本地与远端均未改动，副本在 .obsidian/feishu-sync/conflicts/）", conflicts, true);

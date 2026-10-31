@@ -49,6 +49,43 @@ export interface SyncPlan {
   publishRulesFingerprint?: string;
   pullRulesFingerprint?: string;
   warnings?: { relPath: string; message: string }[];
+  /** 二开：覆盖面明示——远端存在但不参与当前同步模式的节点，按 obj_type 聚合 */
+  unsynced?: UnsyncedNodeGroup[];
+}
+
+/** 二开：一类不参与当前同步模式的远端内容（按 obj_type 聚合），用于覆盖面明示 */
+export interface UnsyncedNodeGroup {
+  objType: string;
+  count: number;
+}
+
+export const OBJ_TYPE_LABELS: Record<string, string> = {
+  docx: "飞书文档",
+  doc: "旧版文档",
+  sheet: "电子表格",
+  bitable: "多维表格",
+  mindnote: "思维笔记",
+  slides: "幻灯片",
+  file: "文件",
+};
+
+/**
+ * 二开：从知识库树里统计"叶子节点中不参与同步"的内容。
+ * 有子级的节点按目录处理（其正文是否导出是另一个已知边界，这里不统计）。
+ * syncedObjTypes：当前模式会同步的 obj_type（md 模式 = file，doc 模式 = docx）。
+ */
+export function countUnsyncedLeafNodes(entries: WikiTreeEntry[], syncedObjTypes: string[]): UnsyncedNodeGroup[] {
+  const parentTokens = new Set<string>();
+  for (const entry of entries) {
+    if (entry.parentNodeToken) parentTokens.add(entry.parentNodeToken);
+  }
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    if (syncedObjTypes.includes(entry.objType)) continue;
+    if (parentTokens.has(entry.nodeToken)) continue;
+    counts.set(entry.objType, (counts.get(entry.objType) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([objType, count]) => ({ objType, count })).sort((a, b) => b.count - a.count);
 }
 
 export const ACTION_LABELS: Record<SyncAction, string> = {
@@ -176,6 +213,16 @@ export type SyncDirectionProfile = "pull" | "both" | "push";
 /** 二开：冲突策略。keep-both = 保留双方（上游行为）；remote-wins = 远端覆盖本地，本地旧版另存副本 */
 export type ConflictPolicy = "keep-both" | "remote-wins";
 
+/** 二开：一次"检查更新"（只探测，不拉取）的结果快照 */
+export interface ProfileUpdateInfo {
+  /** 已映射且远端修改时间有变化的篇数 */
+  changed: number;
+  /** 远端新增、本地尚未映射的篇数 */
+  added: number;
+  /** 检查完成时间 */
+  at: number;
+}
+
 /** 二开：一个同步目标（知识库 × 本地目录 × 方向档位）的完整快照 */
 export interface SyncTargetProfile {
   id: string;
@@ -195,7 +242,6 @@ export interface SyncTargetProfile {
     attachmentFolder: string;
     attachmentLinkStyle: "shortest" | "path";
     docVerifyRemoteByContent: boolean;
-    autoSyncMinutes: number;
     restoreLocalDeleted: boolean;
     recreateRemoteIfDeleted: boolean;
     propagateLocalDelete: boolean;
@@ -204,6 +250,8 @@ export interface SyncTargetProfile {
   };
   /** 该目标上次激活时的同步状态；settings.state 始终是当前激活目标的活状态 */
   state?: SyncState;
+  /** 二开：最近一次"检查更新"的结果（只探测不拉取），知识库面板与状态栏据此显示更新标识 */
+  updateInfo?: ProfileUpdateInfo;
 }
 
 export interface PluginSettings {

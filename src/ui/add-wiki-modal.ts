@@ -1,9 +1,10 @@
-﻿import { Notice, Setting, App, Modal } from "obsidian";
+import { Notice, Setting, App, Modal } from "obsidian";
 import { getNodeByToken, listSpaces } from "../feishu/wiki";
 import type { FeishuClient } from "../feishu/client";
 import type { PluginSettings, SyncDirectionProfile } from "../sync/types";
 import {
   createAndActivateProfile,
+  findFolderConflict,
   newProfileId,
   parseWikiInput,
   sanitizeDirName,
@@ -128,7 +129,7 @@ export class AddWikiModal extends Modal {
     // 档位
     new Setting(this.resultEl).setName("同步方式").setHeading();
     const directionOptions: Array<{ value: SyncDirectionProfile; label: string; hint: string }> = [
-      { value: "pull", label: "仅拉取（镜像）", hint: "只把远端内容拉到本地学习；冲突默认远端覆盖本地，本地旧版自动另存副本" },
+      { value: "pull", label: "仅拉取（只读）", hint: "只把远端内容拉到本地学习；冲突默认远端覆盖本地，本地旧版自动另存副本" },
       { value: "both", label: "双向协作", hint: "本地与远端互相同步；适合你自己有编辑权限、两边都要写的库" },
       { value: "push", label: "仅推送", hint: "把本地内容定期发布到远端；不拉取远端改动" },
     ];
@@ -148,7 +149,7 @@ export class AddWikiModal extends Modal {
     }
     this.resultEl.createEl("div", {
       cls: "setting-item-description",
-      text: "不确定权限时选「仅拉取（镜像）」最安全：如果之后发现有编辑权限，随时可以在设置里改成双向协作。",
+      text: "不确定权限时选「仅拉取（只读）」最安全：如果之后发现有编辑权限，随时可以在设置里改成双向协作。",
     });
 
     new Setting(this.resultEl)
@@ -235,6 +236,12 @@ export class AddWikiModal extends Modal {
         .join("/");
     }
     const name = this.resolved.name;
+    // 二开：本地目录不能与其他知识库重叠，否则两个知识库会互相覆盖对方的映射状态
+    const conflictName = findFolderConflict(settings, this.localFolder);
+    if (conflictName) {
+      new Notice(`本地目录与知识库「${conflictName}」重叠，两个知识库会互相覆盖。请换一个目录再添加。`, 8000);
+      return;
+    }
     const profileId = newProfileId();
     createAndActivateProfile(settings, {
       id: profileId,
@@ -254,7 +261,6 @@ export class AddWikiModal extends Modal {
         attachmentFolder: settings.attachmentFolder,
         attachmentLinkStyle: settings.attachmentLinkStyle,
         docVerifyRemoteByContent: settings.docVerifyRemoteByContent,
-        autoSyncMinutes: settings.autoSyncMinutes,
         restoreLocalDeleted: this.direction === "pull" ? true : settings.restoreLocalDeleted,
         recreateRemoteIfDeleted: false,
         propagateLocalDelete: false,

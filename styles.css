@@ -53,3 +53,133 @@
   font-family: var(--font-monospace);
   word-break: break-all;
 }
+
+/* ── 二开：知识库功能面板 ─────────────────────────────── */
+
+.feishu-wiki-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.feishu-wiki-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+}
+
+.feishu-wiki-row:hover {
+  background: var(--background-secondary);
+}
+
+.feishu-wiki-row.is-active {
+  border-color: var(--interactive-accent);
+}
+
+.feishu-wiki-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.feishu-wiki-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.feishu-wiki-row-name {
+  font-weight: var(--font-medium);
+}
+
+.feishu-wiki-row-direction {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.feishu-wiki-row-active {
+  color: var(--text-success);
+  font-size: var(--font-ui-smaller);
+}
+
+.feishu-wiki-row-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  word-break: break-all;
+}
+
+.feishu-wiki-row-updates {
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-medium);
+  margin-top: 2px;
+}
+
+.feishu-wiki-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.feishu-wiki-row-delete.is-armed,
+.feishu-wiki-row-delete.mod-warning {
+  color: var(--text-error);
+}
+
+.feishu-wiki-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── 二开：设置页抽屉与授权警示 ───────────────────────── */
+
+.feishu-drawer {
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: 16px;
+  padding-top: 4px;
+}
+
+.feishu-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 6px 0;
+  user-select: none;
+}
+
+.feishu-drawer-header:hover .feishu-drawer-title {
+  color: var(--text-normal);
+}
+
+.feishu-drawer-title {
+  font-weight: var(--font-medium);
+  color: var(--text-muted);
+}
+
+.feishu-drawer-arrow {
+  color: var(--text-muted);
+}
+
+.feishu-drawer:not(.is-open) .feishu-drawer-body {
+  display: none;
+}
+
+.feishu-auth-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--background-modifier-error-border);
+  background: var(--background-modifier-error);
+  border-radius: var(--radius-m);
+  color: var(--text-error);
+}

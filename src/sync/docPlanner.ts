@@ -466,7 +466,7 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
           items.push(item(relPath, "link", "两边内容一致，只建立映射", extra));
         } else if (input.conflictPolicy === "remote-wins") {
           items.push(
-            item(relPath, "pull", "镜像档：远端覆盖本地（本地旧版已另存副本）", { ...extra, backupLocal: true }),
+            item(relPath, "pull", "只读档：远端覆盖本地（本地旧版已另存副本）", { ...extra, backupLocal: true }),
           );
         } else {
           items.push(conflictItem(relPath, state, "首次对接：同名文档两边内容不同，已保留双方", extra, localHash, hash));
@@ -505,7 +505,7 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
       if (remoteState.changed) {
         if (input.conflictPolicy === "remote-wins") {
           items.push(
-            item(relPath, "create-local", "镜像档：本地已删除，远端为唯一事实源，恢复最新内容", { ...remoteFields, remoteHash: hash }),
+            item(relPath, "create-local", "只读档：本地已删除，远端为唯一事实源，恢复最新内容", { ...remoteFields, remoteHash: hash }),
           );
         } else {
           items.push(
@@ -592,7 +592,7 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
       continue;
     }
     if (input.conflictPolicy === "remote-wins") {
-      items.push(item(relPath, "pull", "镜像档：两边都改过，远端覆盖本地（本地旧版已另存副本）", { ...extra, backupLocal: true }));
+      items.push(item(relPath, "pull", "只读档：两边都改过，远端覆盖本地（本地旧版已另存副本）", { ...extra, backupLocal: true }));
       continue;
     }
     items.push(conflictItem(relPath, state, "两边都改过且内容不同，已保留双方", extra, localHash, hash ?? localHash));

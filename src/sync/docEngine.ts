@@ -4,7 +4,7 @@ import type { AuthManager } from "../feishu/auth";
 import { FeishuClient } from "../feishu/client";
 import { fetchDocumentMarkdown } from "../feishu/docs";
 import { batchQueryMetas } from "../feishu/files";
-import type { ResolvedWikiRoot, WikiSpace, WikiTreeEntry } from "../feishu/wiki";
+import type { ResolvedWikiRoot, WikiNode, WikiSpace, WikiTreeEntry } from "../feishu/wiki";
 import { getNodeByToken, listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
 import type { Logger } from "../log";
 import type { ResolvedImage, RulesFile } from "../convert/rules";
@@ -18,8 +18,8 @@ import { parseTokenFromInput } from "./engine";
 import { sha256Hex } from "./hash";
 import type { ReportEntry } from "./executor";
 import { PathFilter, readLocalBytes, scanLocalNotes } from "./scanner";
-import type { LocalNote, PluginSettings, SyncPlan } from "./types";
-import { basenameOf, dirnameOf, stripLocalFolder } from "./types";
+import type { LocalNote, PluginSettings, SyncPlan, UnsyncedNodeGroup } from "./types";
+import { basenameOf, countUnsyncedLeafNodes, dirnameOf, stripLocalFolder } from "./types";
 
 export interface DocEngineDeps {
   app: App;
@@ -70,6 +70,9 @@ export class DocSyncEngine {
     let rootNodeToken = parseTokenFromInput(settings.rootNodeToken) || undefined;
     let resolvedRoot: ResolvedWikiRoot | undefined;
 
+    // 二开：预览一致性校验必须最先做。执行预览过的计划时，任何配置变化都应立刻以
+    // 「请重新预览」拒绝，不能先做根节点解析等网络调用——换目标后那会抛出不相干的接口错误。
+    if (options.preApprovedPlan) assertPlanCurrent(options.preApprovedPlan, settings);
     const client = this.createClient();
     if (rootNodeToken) {
       resolvedRoot = await resolveWikiRoot(client, rootNodeToken);
@@ -91,7 +94,6 @@ export class DocSyncEngine {
     if (!spaceId) throw new Error("请先在插件设置里填写知识库 space_id，或提供可访问的 /wiki/ 根节点链接");
     const filter = new PathFilter(settings.excludePatterns);
 
-    if (options.preApprovedPlan) assertPlanCurrent(options.preApprovedPlan, settings);
     if (prepareTarget(settings, spaceId, rootNodeToken ?? "", "doc")) {
       logger.warn("同步目标或模式已变更，已清空旧映射，本轮按首次对接判定");
     }
@@ -127,6 +129,7 @@ export class DocSyncEngine {
       validateLocalPaths(local.keys(), settings);
 
       options.onProgress?.("读取飞书知识库节点树…");
+      const skippedNonMarkdown: WikiNode[] = [];
       const rootEntry: WikiTreeEntry | undefined = settings.includeRootPage && resolvedRoot && resolvedRoot.objType === "docx" && resolvedRoot.title
         ? {
             nodeToken: resolvedRoot.nodeToken,
@@ -144,7 +147,20 @@ export class DocSyncEngine {
         onProgress: (visited) => {
           if (visited % 50 === 0) options.onProgress?.(`读取飞书知识库节点树…（已见 ${visited} 个节点）`);
         },
+        onSkippedNonMarkdown: (node) => skippedNonMarkdown.push(node),
       });
+      // 二开：覆盖面明示——叶子节点里文档模式不同步的内容，按类型聚合。
+      // 文档模式只认飞书文档（docx）；.md 文件节点要切到文件镜像模式才能拉取。
+      const unsyncedCounts = new Map<string, number>();
+      for (const group of countUnsyncedLeafNodes(entries, ["docx"])) {
+        unsyncedCounts.set(group.objType, group.count);
+      }
+      if (skippedNonMarkdown.length > 0) {
+        unsyncedCounts.set("file", (unsyncedCounts.get("file") ?? 0) + skippedNonMarkdown.length);
+      }
+      const unsynced: UnsyncedNodeGroup[] = [...unsyncedCounts.entries()]
+        .map(([objType, count]) => ({ objType, count }))
+        .sort((a, b) => b.count - a.count);
       const index = buildDocRemoteIndex({
         entries,
         state: settings.state,
@@ -220,6 +236,7 @@ export class DocSyncEngine {
       logger.debug(
         `文档模式：本轮 fetch 文档 ${cache.fetchCount} 次、批量元数据 ${remoteModifiedTimes.size > 0 ? "命中" : "未命中"}（${settings.docVerifyRemoteByContent ? "安全阀打开：每轮全文校验" : "时间戳快路径"}）`,
       );
+      planned.unsynced = unsynced.length > 0 ? unsynced : undefined;
       // Baselines, including timestamps, are updated only after the approved action succeeds.
       // 与 md 模式一致：先按本次模式过滤计划，预览/报告里只出现真的会执行的动作
       const plan = deferDeletes(filterPlan(planned, options.mode), options.allowDeletes);

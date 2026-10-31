@@ -1869,7 +1869,7 @@ async function main(): Promise<void> {
     eq(entries[0]?.copyPath, conflictCopyPath, "冲突报告复用的副本路径");
     const copies = listConflictCopies();
     eq(copies.length, 1, "冲突副本文件数（不应新增）");
-    eq(path.join(CONFLICT_DIR_REL, copies[0]), conflictCopyPath, "冲突副本文件路径");
+    eq(path.join(CONFLICT_DIR_REL, copies[0]).replace(/\\/g, "/"), conflictCopyPath, "冲突副本文件路径");
 
     return `conflict=1（复用 ${path.basename(conflictCopyPath)}），upload_all=${round.delta.uploadAll}，副本数=1`;
   });

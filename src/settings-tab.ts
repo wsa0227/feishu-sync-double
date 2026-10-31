@@ -7,7 +7,7 @@ import { CONFLICT_DIR, emptyState, normalizeLocalFolder } from "./sync/types";
 import type { PluginSettings } from "./sync/types";
 import type { RunOptions, RunResult } from "./sync/engine";
 import { defaultRulesFile, loadRules, RULES_PATH, writeRulesFile } from "./convert/rules";
-import { directionLabel } from "./sync/profileStore";
+import { directionLabel, findFolderConflict } from "./sync/profileStore";
 
 /** 两种模式的引擎（md 文件镜像 / 飞书文档）共用的入口。 */
 export interface SyncEngineHandle {
@@ -34,8 +34,8 @@ export interface SettingsHost {
   isSyncBusy(): boolean;
   /** 二开：添加知识库向导 */
   openAddWikiWizard(): void;
-  /** 二开：切换同步目标 */
-  openTargetSwitcher(): void;
+  /** 二开：知识库功能面板（列表、更新标识与操作）；pendingAction 来自同步命令，只影响提示 */
+  openWikiPanel(pendingAction?: "pull" | "push" | "both"): void;
   /** 二开：刷新状态栏 */
   updateStatusBar(): void;
 }
@@ -78,16 +78,63 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
 
     containerEl.createEl("p", {
       cls: "setting-item-description",
-      text: "将当前仓库的 Markdown 笔记与飞书知识库双向同步。文档模式便于在飞书阅读与编辑；文件镜像模式保留原始 Markdown。",
+      text: "将当前仓库的 Markdown 笔记与飞书知识库同步。文档模式便于在飞书阅读与编辑；文件镜像模式保留原始 Markdown。点状态栏可打开知识库面板。",
     });
 
-    this.renderAuth(containerEl, settings);
+    // 二开：授权是否可用决定页面形态——不可用时顶部警示 + 授权抽屉自动展开
+    const authUsable = this.isAuthUsable(settings);
+    if (!authUsable) {
+      const banner = containerEl.createDiv({ cls: "feishu-auth-warning" });
+      banner.createEl("span", {
+        text: "飞书授权未完成或已失效：同步与更新检查都不可用。点右侧按钮重新授权，或在下方抽屉里配置应用与授权。",
+      });
+      const fix = banner.createEl("button", { text: "重新授权", cls: "mod-cta" });
+      fix.onclick = () => {
+        void this.host.startAuthorization()
+          .then(() => this.display())
+          .catch((error) => new Notice(`授权失败：${error instanceof Error ? error.message : String(error)}`, 8000));
+      };
+    }
+
+    // ① 高频区：知识库列表与同步方式
     this.renderTargetAndProfile(containerEl, settings);
     this.renderTarget(containerEl, settings);
-    this.renderSyncMode(containerEl, settings);
-    this.renderRules(containerEl);
-    this.renderBehaviour(containerEl, settings);
-    this.renderState(containerEl, settings);
+
+    // ② 低频区：模式与行为（默认收起）
+    this.drawer(containerEl, "同步模式与行为", false, (body) => {
+      this.renderSyncMode(body, settings);
+      this.renderBehaviour(body, settings);
+    });
+
+    // ③ 一次性区：应用与授权（抽屉；失效时自动展开）
+    this.drawer(containerEl, "飞书应用与授权", !authUsable, (body) => this.renderAuth(body, settings));
+
+    // ④ 抽屉：转换规则、状态与诊断
+    this.drawer(containerEl, "转换规则（文档模式）", false, (body) => this.renderRules(body));
+    this.drawer(containerEl, "状态与诊断", false, (body) => this.renderState(body, settings));
+  }
+
+  /** 二开：授权是否可用（应用凭证 + 用户刷新令牌）。决定警示条与授权抽屉的展开状态。 */
+  private isAuthUsable(settings: PluginSettings): boolean {
+    if (!settings.appId || !settings.appSecret) return false;
+    if (settings.authMode !== "user") return true;
+    const tokens = settings.userTokens;
+    if (!tokens?.refreshToken) return false;
+    return tokens.refreshExpiresAt > Date.now();
+  }
+
+  /** 二开：可折叠分区（抽屉）。标题行点击展开/收起；内容始终渲染，靠样式隐藏。 */
+  private drawer(container: HTMLElement, title: string, open: boolean, render: (body: HTMLElement) => void): void {
+    const wrap = container.createDiv({ cls: `feishu-drawer${open ? " is-open" : ""}` });
+    const header = wrap.createDiv({ cls: "feishu-drawer-header" });
+    header.createEl("span", { text: title, cls: "feishu-drawer-title" });
+    const arrow = header.createEl("span", { text: open ? "▾" : "▸", cls: "feishu-drawer-arrow" });
+    header.onclick = () => {
+      const willOpen = !wrap.hasClass("is-open");
+      wrap.toggleClass("is-open", willOpen);
+      arrow.setText(willOpen ? "▾" : "▸");
+    };
+    render(wrap.createDiv({ cls: "feishu-drawer-body" }));
   }
 
   /** 二开：目标切换、档位与冲突策略。 */
@@ -96,13 +143,13 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
     const active = profiles.find((item) => item.id === settings.activeProfileId);
     const direction = settings.syncDirection ?? "both";
 
-    new Setting(containerEl).setName("同步目标与档位").setHeading();
+    new Setting(containerEl).setName("知识库").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
-      text: "一个目标 = 一个知识库（空间/根节点）+ 一个本地目录 + 一个方向档位。换库学习添加新目标即可，不用来回改配置。",
+      text: "一个知识库条目 = 一个飞书知识库（空间/根节点）+ 一个本地目录 + 一种同步方式。要跟读或管理新的知识库，添加一个即可，不用来回改配置。",
     });
 
-    const switchSetting = new Setting(containerEl).setName("当前目标");
+    const switchSetting = new Setting(containerEl).setName("当前知识库");
     if (profiles.length > 1) {
       switchSetting.addDropdown((dropdown) => {
         for (const profile of profiles) {
@@ -116,19 +163,19 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
       });
     }
     switchSetting.addButton((button) =>
-      button.setButtonText(profiles.length > 1 ? "切换…" : "切换目标…").onClick(() => this.host.openTargetSwitcher()),
+      button.setButtonText("管理知识库…").onClick(() => this.host.openWikiPanel()),
     );
     switchSetting.addButton((button) => button.setButtonText("➕ 添加知识库").setCta().onClick(() => this.host.openAddWikiWizard()));
 
     new Setting(containerEl)
-      .setName("同步档位（方向）")
+      .setName("同步方式（方向）")
       .setDesc(
-        "仅拉取（镜像）：只把远端内容拉到本地，冲突默认远端覆盖本地（本地旧版自动另存副本），适合学习别人的知识库；" +
-          "双向协作：两边互相同步，冲突保留双方；仅推送：定期把本地内容发布到远端。状态栏与侧栏按钮按档位执行。",
+        "仅拉取（只读）：只把远端内容拉到本地，冲突默认远端覆盖本地（本地旧版自动另存副本），适合学习别人的知识库；" +
+          "双向协作：两边互相同步，冲突保留双方；仅推送：定期把本地内容发布到远端。状态栏与侧栏按钮按同步方式执行。",
       )
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("pull", "仅拉取（镜像）")
+          .addOption("pull", "仅拉取（只读）")
           .addOption("both", "双向协作")
           .addOption("push", "仅推送")
           .setValue(direction)
@@ -151,9 +198,9 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
 
     if (direction === "pull") {
       new Setting(containerEl)
-        .setName("镜像档冲突策略")
+        .setName("只读档冲突策略")
         .setDesc(
-          "远端覆盖本地：本地是远端的镜像，冲突时以远端为准，本地改动自动另存到 .obsidian/feishu-sync/conflicts/。" +
+          "远端覆盖本地：本地是远端的只读镜像，冲突时以远端为准，本地改动自动另存到 .obsidian/feishu-sync/conflicts/。" +
             "保留双方：沿用上游行为，生成冲突副本等待人工处理。",
         )
         .addDropdown((dropdown) =>
@@ -171,7 +218,7 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
     }
 
     if (active) {
-      new Setting(containerEl).setName("目标名称").setDesc("仅用于在切换列表里辨认").addText((text) =>
+      new Setting(containerEl).setName("知识库名称").setDesc("仅用于在知识库列表里辨认").addText((text) =>
         text.setValue(active.name).onChange(async (value) => {
           active.name = value.trim() || active.name;
           await this.host.saveSettings();
@@ -399,7 +446,7 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
   }
 
   private renderTarget(containerEl: HTMLElement, settings: PluginSettings): void {
-    new Setting(containerEl).setName("同步目标").setHeading();
+    new Setting(containerEl).setName("知识库位置").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "本地 vault 根目录 ↔ 知识空间。只有 .md 文件参与同步；同步会在知识库里按本地目录层级创建页面。",
@@ -449,10 +496,17 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("本地同步目录（可留空）")
-      .setDesc("相对 vault 根目录填写，例如 飞书同步 或 文档/飞书；留空时直接放在 vault 根目录。切换此目录后会按新目录重新对接，不会移动旧文件。")
+      .setDesc("相对 vault 根目录填写，例如 飞书同步 或 文档/飞书；留空时直接放在 vault 根目录。切换此目录后会按新目录重新对接，不会移动旧文件。不能与其他知识库的目录重叠。")
       .addText((text) =>
         text.setValue(settings.localFolder).onChange(async (value) => {
-          settings.localFolder = normalizeLocalFolder(value);
+          const next = normalizeLocalFolder(value);
+          const conflictName = findFolderConflict(settings, next, settings.activeProfileId);
+          if (conflictName) {
+            new Notice(`本地目录与知识库「${conflictName}」重叠，两个知识库会互相覆盖。未保存，请换一个目录。`, 8000);
+            text.setValue(settings.localFolder);
+            return;
+          }
+          settings.localFolder = next;
           await this.host.saveSettings();
         }),
       );
@@ -633,8 +687,8 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("定时自动同步")
-      .setDesc("单位分钟，0 表示关闭。自动同步跳过预览、保留冲突副本；删除项留待手动同步确认。")
+      .setName("定时检查更新（可选，默认关闭）")
+      .setDesc("单位分钟，0 表示关闭。到点只做只读探测（相当于 git fetch）：在状态栏标记哪些知识库有更新，绝不自动拉取。探测要遍历各知识库的目录树，知识库多时建议保持关闭，用知识库面板里的「检查全部更新」按钮手动检查。")
       .addText((text) =>
         text.setValue(String(settings.autoSyncMinutes)).onChange(async (value) => {
           const parsed = Number.parseInt(value, 10);
@@ -691,5 +745,6 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
     list.createEl("li", { text: "文档模式会上传本地图片（写进文档的图片块）并下载飞书里的图片到附件目录；规则文件里 image-upload / image-download 可关。文件镜像模式不做图片处理，图片只是笔记里的文本。" });
     list.createEl("li", { text: "删除默认不会传播，只在结果里提示；要传播就在上面打开对应的删除开关（远端删除进飞书回收站，本地删除进 .trash）。" });
     list.createEl("li", { text: "两边同时修改同一篇时按冲突处理：远端版本另存为副本，本地与远端都不动。" });
+    list.createEl("li", { text: "远端里不参与当前模式的内容（电子表格、多维表格、附件文件等）不会被同步或删除；它们的数量会在计划与报告里按类型汇总提示。" });
   }
 }
