@@ -2441,6 +2441,45 @@ async function main(): Promise<void> {
     }
   });
 
+  await scenario("15d 文档模式：镜像档冲突自动远端覆盖，本地旧版另存副本", async () => {
+    const fake = new FakeFeishu({ seedRootNode: false });
+    __setRequestUrlHandler(fake.handler);
+    try {
+      const doc = fake.seedWikiDocument({ title: "镜像笔记", content: "<title>镜像笔记</title>\n远端第一版。\n" });
+      const vaultRoot = path.join(TMP_ROOT, "vault-doc-mirror");
+      fs.mkdirSync(vaultRoot, { recursive: true });
+      const h = createDocHarness(fake, vaultRoot, { localFolder: "", conflictPolicy: "remote-wins", syncDirection: "pull" });
+
+      // 第 1 轮：全新拉取
+      const first = await runDocRound(h, "镜像第 1 轮：全新拉取", "pull");
+      eq(first.result.plan.counts["create-local"] ?? 0, 1, "create-local 数量");
+
+      // 两边都改 → 镜像档自动远端覆盖，本地旧版另存副本
+      writeVaultFile("镜像笔记.md", "本地学到的补充。\n", vaultRoot);
+      fake.setDocContent(doc.documentId, "<title>镜像笔记</title>\n远端第二版。\n");
+      const second = await runDocRound(h, "镜像第 2 轮：两边都改（镜像档）", "pull");
+      eq(second.result.plan.counts.pull ?? 0, 1, "冲突自动转为 pull（远端覆盖）");
+      eq(second.result.plan.counts.conflict ?? 0, 0, "不再保留双方");
+      eq(readVaultFile("镜像笔记.md", vaultRoot), "远端第二版。\n", "本地被远端覆盖");
+      const copies = listConflictCopies(vaultRoot);
+      eq(copies.length, 1, "本地旧版另存副本");
+      eq(fs.readFileSync(path.join(vaultRoot, CONFLICT_DIR_REL, copies[0]), "utf8"), "本地学到的补充。\n", "副本内容是本地旧版");
+
+      // 清映射重新对接 → 首次对接冲突同样远端覆盖
+      h.settings.state.docRecords = {};
+      writeVaultFile("镜像笔记.md", "重新对接前又改了。\n", vaultRoot);
+      fake.setDocContent(doc.documentId, "<title>镜像笔记</title>\n远端第三版。\n");
+      const third = await runDocRound(h, "镜像第 3 轮：清映射后重对接", "pull");
+      eq(third.result.plan.counts.pull ?? 0, 1, "首次对接冲突也自动远端覆盖");
+      eq(third.result.plan.counts.conflict ?? 0, 0, "不生成首次对接冲突");
+      eq(readVaultFile("镜像笔记.md", vaultRoot), "远端第三版。\n", "覆盖成功");
+
+      return "两边都改与首次对接冲突都自动远端覆盖，本地旧版副本 1 份且内容正确";
+    } finally {
+      __setRequestUrlHandler(docFake.handler);
+    }
+  });
+
   await scenario("16 文档模式：无改动重跑（0 次写请求，全部 skip）", async () => {
     const { result, delta } = await runDocRound(dh, "文档模式第 2 轮：没有任何改动");
 

@@ -12,6 +12,9 @@ import { DEFAULT_SETTINGS, ensureOAuthScopes } from "./sync/types";
 import { AuthCodeModal } from "./ui/auth-modal";
 import { PlanModal } from "./ui/plan-modal";
 import { ReportModal } from "./ui/report-modal";
+import { AddWikiModal } from "./ui/add-wiki-modal";
+import { SwitchTargetModal } from "./ui/switch-target-modal";
+import { activateProfile, directionLabel, ensureProfilesMigrated, syncSettingsIntoActiveProfile } from "./sync/profileStore";
 
 const CHANGE_ACTIONS = new Set<SyncAction>(["push", "create-remote", "pull", "create-local", "link", "delete-remote", "delete-local"]);
 
@@ -38,6 +41,8 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    // 二开：旧配置迁移出默认同步目标（幂等）
+    if (ensureProfilesMigrated(this.settings)) await this.saveSettings();
 
     this.logger = new Logger(
       () => this.app,
@@ -75,7 +80,7 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
 
     this.statusBar = this.addStatusBarItem();
     this.statusBar.addClass("mod-clickable");
-    this.registerDomEvent(this.statusBar, "click", () => void this.runSync("both"));
+    this.registerDomEvent(this.statusBar, "click", () => void this.runSync(this.settings.syncDirection ?? "both"));
     this.updateStatusBar();
 
     this.addSettingTab(new FeishuWikiSyncSettingTab(this.app, this));
@@ -89,8 +94,18 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
       name: "强制重推（忽略基线，刷新所有本地笔记）",
       callback: () => void this.runSync("push", { forcePush: true }),
     });
+    this.addCommand({
+      id: "add-wiki",
+      name: "添加知识库（粘贴链接，自动解析空间/目录/档位）",
+      callback: () => this.openAddWikiWizard(),
+    });
+    this.addCommand({
+      id: "switch-target",
+      name: "切换同步目标",
+      callback: () => this.openTargetSwitcher(),
+    });
 
-    this.addRibbonIcon("refresh-cw", "Feishu Wiki Sync：双向同步", () => void this.runSync("both"));
+    this.addRibbonIcon("refresh-cw", "Feishu Wiki Sync：按当前档位同步", () => void this.runSync(this.settings.syncDirection ?? "both"));
 
     this.refreshAutoSync();
   }
@@ -135,6 +150,8 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
   }
 
   async saveSettings(): Promise<void> {
+    // 二开：平铺的目标字段与状态是激活目标的活视图，写盘前收回快照
+    syncSettingsIntoActiveProfile(this.settings);
     await this.saveData(this.settings);
   }
 
@@ -197,7 +214,7 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
   }
 
   async runSync(
-    mode: SyncMode,
+    requestedMode: SyncMode,
     options: { preview?: boolean; quiet?: boolean; forcePush?: boolean } = {},
   ): Promise<void> {
     if (this.engine.isSyncing() || this.syncInFlight) {
@@ -207,6 +224,33 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
     if (!this.settings.appId || !this.settings.appSecret) {
       new Notice("请先在插件设置里填写飞书应用的 App ID 与 App Secret");
       return;
+    }
+    // 二开：按当前目标的档位（方向）拦截/改写请求
+    let mode = requestedMode;
+    const direction = this.settings.syncDirection ?? "both";
+    const quiet = options.quiet === true;
+    if (direction === "pull") {
+      if (options.forcePush) {
+        new Notice("当前目标为「仅拉取（镜像）」档位，强制重推不可用；如确需推送请先在设置里切回双向协作");
+        return;
+      }
+      if (mode === "push") {
+        new Notice("当前目标为「仅拉取（镜像）」档位，已跳过推送");
+        return;
+      }
+      if (mode === "both") {
+        mode = "pull";
+        if (!quiet) new Notice("当前目标为「仅拉取（镜像）」档位，已按仅拉取执行", 4000);
+      }
+    } else if (direction === "push") {
+      if (mode === "pull") {
+        new Notice("当前目标为「仅推送」档位，已跳过拉取");
+        return;
+      }
+      if (mode === "both") {
+        mode = "push";
+        if (!quiet) new Notice("当前目标为「仅推送」档位，已按仅推送执行", 4000);
+      }
     }
     if (options.forcePush && this.settings.syncMode !== "doc") {
       new Notice("强制重推仅用于文档模式；文件镜像模式请使用普通同步");
@@ -266,13 +310,58 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
     }
   }
 
-  private updateStatusBar(): void {
+  updateStatusBar(): void {
     if (!this.statusBar) return;
     const last = this.settings.state.lastSyncAt;
     const docMode = this.settings.syncMode === "doc";
     const count = Object.keys(docMode ? this.settings.state.docRecords : this.settings.state.records).length;
     const stamp = last ? new Date(last).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "未同步";
-    this.statusBar.setText(`飞书${docMode ? "文档" : ""} ${stamp} · ${count} 篇`);
-    this.statusBar.setAttr("aria-label", docMode ? "点击执行文档模式双向同步" : "点击执行飞书双向同步");
+    const direction = this.settings.syncDirection ?? "both";
+    const profileName = this.settings.localFolder ? this.settings.localFolder.split("/").filter(Boolean).pop() : "";
+    const suffix = direction === "pull" ? " ↓" : direction === "push" ? " ↑" : "";
+    const nameSuffix = profileName ? ` · ${profileName}` : "";
+    this.statusBar.setText(`飞书${docMode ? "文档" : ""}${suffix} ${stamp} · ${count} 篇${nameSuffix}`);
+    this.statusBar.setAttr("aria-label", `点击按「${directionLabel(direction)}」档位执行同步；切换目标用命令面板`);
+  }
+
+  /** 二开：添加知识库向导（粘贴链接 → 解析空间/范围/目录/档位 → 建目标并可选首次同步）。 */
+  openAddWikiWizard(): void {
+    if (!this.settings.appId || !this.settings.appSecret) {
+      new Notice("请先在插件设置里填写飞书应用的 App ID 与 App Secret");
+      return;
+    }
+    new AddWikiModal(this.app, {
+      settings: () => this.settings,
+      createClient: () => this.engine.createClient(),
+      onFinish: async (result) => {
+        this.updateStatusBar();
+        this.refreshAutoSync();
+        await this.runSync(result.direction, { preview: true });
+      },
+    }).open();
+  }
+
+  /** 二开：切换同步目标。 */
+  openTargetSwitcher(): void {
+    const profiles = this.settings.profiles ?? [];
+    if (profiles.length === 0) {
+      this.openAddWikiWizard();
+      return;
+    }
+    new SwitchTargetModal(this.app, {
+      profiles,
+      activeId: this.settings.activeProfileId ?? "",
+      onSwitch: async (id) => {
+        const changed = activateProfile(this.settings, id);
+        if (changed) {
+          await this.saveSettings();
+          this.updateStatusBar();
+          this.refreshAutoSync();
+          const active = profiles.find((item) => item.id === id);
+          if (active) new Notice(`已切换到目标：${active.name}（${directionLabel(active.direction)}）`);
+        }
+      },
+      onAdd: () => this.openAddWikiWizard(),
+    }).open();
   }
 }

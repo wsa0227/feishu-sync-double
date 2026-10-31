@@ -4,7 +4,7 @@ import type { AuthManager } from "../feishu/auth";
 import { FeishuClient } from "../feishu/client";
 import { batchQueryMetas, downloadFile } from "../feishu/files";
 import type { WikiSpace } from "../feishu/wiki";
-import { listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
+import { getNodeByToken, listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
 import type { Logger } from "../log";
 import type { ReportEntry } from "./executor";
 import { executePlan } from "./executor";
@@ -72,6 +72,11 @@ export class SyncEngine {
   async listSpaces(): Promise<WikiSpace[]> {
     const client = this.createClient();
     return listSpaces(client);
+  }
+
+  /** 二开：按节点令牌解析知识库节点（添加知识库向导用）。 */
+  async resolveWikiNode(token: string) {
+    return getNodeByToken(this.createClient(), token, "wiki");
   }
 
   async run(options: RunOptions): Promise<RunResult> {

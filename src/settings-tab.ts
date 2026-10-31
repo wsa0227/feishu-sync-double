@@ -7,12 +7,17 @@ import { CONFLICT_DIR, emptyState, normalizeLocalFolder } from "./sync/types";
 import type { PluginSettings } from "./sync/types";
 import type { RunOptions, RunResult } from "./sync/engine";
 import { defaultRulesFile, loadRules, RULES_PATH, writeRulesFile } from "./convert/rules";
+import { directionLabel } from "./sync/profileStore";
 
 /** 两种模式的引擎（md 文件镜像 / 飞书文档）共用的入口。 */
 export interface SyncEngineHandle {
   isSyncing(): boolean;
   listSpaces(): Promise<WikiSpace[]>;
   run(options: RunOptions): Promise<RunResult>;
+  /** 二开：向导用（解析节点令牌） */
+  createClient(): import("./feishu/client").FeishuClient;
+  /** 二开：向导用（按令牌解析节点） */
+  resolveWikiNode(token: string): Promise<import("./feishu/wiki").WikiNode | undefined>;
 }
 
 export interface SettingsHost {
@@ -27,6 +32,12 @@ export interface SettingsHost {
   revokeAuthorization(): Promise<void>;
   refreshAutoSync(): void;
   isSyncBusy(): boolean;
+  /** 二开：添加知识库向导 */
+  openAddWikiWizard(): void;
+  /** 二开：切换同步目标 */
+  openTargetSwitcher(): void;
+  /** 二开：刷新状态栏 */
+  updateStatusBar(): void;
 }
 
 class SpacePickerModal extends FuzzySuggestModal<WikiSpace> {
@@ -71,11 +82,112 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
     });
 
     this.renderAuth(containerEl, settings);
+    this.renderTargetAndProfile(containerEl, settings);
     this.renderTarget(containerEl, settings);
     this.renderSyncMode(containerEl, settings);
     this.renderRules(containerEl);
     this.renderBehaviour(containerEl, settings);
     this.renderState(containerEl, settings);
+  }
+
+  /** 二开：目标切换、档位与冲突策略。 */
+  private renderTargetAndProfile(containerEl: HTMLElement, settings: PluginSettings): void {
+    const profiles = settings.profiles ?? [];
+    const active = profiles.find((item) => item.id === settings.activeProfileId);
+    const direction = settings.syncDirection ?? "both";
+
+    new Setting(containerEl).setName("同步目标与档位").setHeading();
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "一个目标 = 一个知识库（空间/根节点）+ 一个本地目录 + 一个方向档位。换库学习添加新目标即可，不用来回改配置。",
+    });
+
+    const switchSetting = new Setting(containerEl).setName("当前目标");
+    if (profiles.length > 1) {
+      switchSetting.addDropdown((dropdown) => {
+        for (const profile of profiles) {
+          dropdown.addOption(profile.id, `${profile.name}（${directionLabel(profile.direction)}）`);
+        }
+        dropdown.setValue(settings.activeProfileId ?? profiles[0]?.id ?? "");
+        dropdown.onChange(async (value) => {
+          if (value === settings.activeProfileId) return;
+          await this.activateById(value);
+        });
+      });
+    }
+    switchSetting.addButton((button) =>
+      button.setButtonText(profiles.length > 1 ? "切换…" : "切换目标…").onClick(() => this.host.openTargetSwitcher()),
+    );
+    switchSetting.addButton((button) => button.setButtonText("➕ 添加知识库").setCta().onClick(() => this.host.openAddWikiWizard()));
+
+    new Setting(containerEl)
+      .setName("同步档位（方向）")
+      .setDesc(
+        "仅拉取（镜像）：只把远端内容拉到本地，冲突默认远端覆盖本地（本地旧版自动另存副本），适合学习别人的知识库；" +
+          "双向协作：两边互相同步，冲突保留双方；仅推送：定期把本地内容发布到远端。状态栏与侧栏按钮按档位执行。",
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("pull", "仅拉取（镜像）")
+          .addOption("both", "双向协作")
+          .addOption("push", "仅推送")
+          .setValue(direction)
+          .onChange(async (value) => {
+            settings.syncDirection = value === "pull" ? "pull" : value === "push" ? "push" : "both";
+            if (active && settings.syncDirection === "pull") {
+              // 镜像档配套：本地是缓存语义
+              active.conflictPolicy = "remote-wins";
+              settings.conflictPolicy = "remote-wins";
+              settings.restoreLocalDeleted = active.target.restoreLocalDeleted = true;
+              settings.propagateLocalDelete = active.target.propagateLocalDelete = false;
+              settings.propagateRemoteDelete = active.target.propagateRemoteDelete = false;
+            }
+            if (active) active.direction = settings.syncDirection;
+            await this.host.saveSettings();
+            this.host.updateStatusBar();
+            this.display();
+          }),
+      );
+
+    if (direction === "pull") {
+      new Setting(containerEl)
+        .setName("镜像档冲突策略")
+        .setDesc(
+          "远端覆盖本地：本地是远端的镜像，冲突时以远端为准，本地改动自动另存到 .obsidian/feishu-sync/conflicts/。" +
+            "保留双方：沿用上游行为，生成冲突副本等待人工处理。",
+        )
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("remote-wins", "远端覆盖本地（推荐）")
+            .addOption("keep-both", "保留双方")
+            .setValue(settings.conflictPolicy ?? "remote-wins")
+            .onChange(async (value) => {
+              const policy = value === "keep-both" ? "keep-both" : "remote-wins";
+              settings.conflictPolicy = policy;
+              if (active) active.conflictPolicy = policy;
+              await this.host.saveSettings();
+            }),
+        );
+    }
+
+    if (active) {
+      new Setting(containerEl).setName("目标名称").setDesc("仅用于在切换列表里辨认").addText((text) =>
+        text.setValue(active.name).onChange(async (value) => {
+          active.name = value.trim() || active.name;
+          await this.host.saveSettings();
+        }),
+      );
+    }
+  }
+
+  private async activateById(profileId: string): Promise<void> {
+    const { activateProfile } = require("./sync/profileStore") as typeof import("./sync/profileStore");
+    if (activateProfile(this.host.settings, profileId)) {
+      await this.host.saveSettings();
+      this.host.updateStatusBar();
+      this.host.refreshAutoSync();
+      this.display();
+    }
   }
 
   private renderSyncMode(containerEl: HTMLElement, settings: PluginSettings): void {

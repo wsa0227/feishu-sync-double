@@ -23,7 +23,7 @@ import type { DocPlanCache } from "./docPlanner";
 import { documentTitleFor, uniqueDocumentTitle } from "./docPlanner";
 import type { ReportEntry } from "./executor";
 import { localStat, writeLocalBytes } from "./scanner";
-import type { PluginSettings, SyncPlan, SyncState } from "./types";
+import type { ConflictPolicy, PluginSettings, SyncPlan, SyncState } from "./types";
 import { CONFLICT_DIR, basenameOf, dirnameOf, prefixLocalPath, stripLocalFolder } from "./types";
 
 export interface DocExecutionContext {
@@ -46,6 +46,8 @@ export interface DocExecutionContext {
   /** 上行：把 vault 内图片引用解析成真实文件 */
   resolveImage?: (linkpath: string, sourcePath: string) => ResolvedImage | undefined;
   readBinary: (vaultPath: string) => Promise<ArrayBuffer>;
+  /** 二开：冲突策略。remote-wins = 镜像档，执行期冲突自动以远端覆盖本地（本地旧版另存副本） */
+  conflictPolicy?: ConflictPolicy;
 }
 
 export interface DocExecutionOptions {
@@ -165,6 +167,20 @@ export async function executeDocPlan(
     await ensureFolder(ctx.app.vault.adapter, dirnameOf(copyPath));
     await ctx.app.vault.adapter.write(copyPath, remoteText);
     state.conflicts[relPath] = { remoteHash, localHash, copyPath, at: Date.now() };
+    return copyPath;
+  };
+
+  /** 二开：镜像档远端覆盖本地之前，把本地旧版另存一份副本，避免误伤真实改动。 */
+  const backupLocalVersion = async (relPath: string, localText: string): Promise<string> => {
+    const copyPath = conflictCopyRelPath(relPath);
+    await ensureFolder(ctx.app.vault.adapter, dirnameOf(copyPath));
+    await ctx.app.vault.adapter.write(copyPath, localText);
+    state.conflicts[relPath] = {
+      remoteHash: "",
+      localHash: await ctx.hashText(localText),
+      copyPath,
+      at: Date.now(),
+    };
     return copyPath;
   };
 
@@ -346,10 +362,11 @@ export async function executeDocPlan(
           for (const warning of imageWarnings) ctx.logger.warn(`图片：${entry.relPath} ${warning}`);
 
           // 计划生成到写盘之间用户可能已经保存了新改动，写盘前必须复核
+          const mirrorWins = ctx.conflictPolicy === "remote-wins" || entry.backupLocal === true;
           if (present && (entry.localSize !== undefined || entry.localMtime !== undefined)) {
             const before = localStat(ctx.app, entry.relPath);
             const movedSincePlan = before.size !== entry.localSize || before.mtime !== entry.localMtime;
-            if (movedSincePlan) {
+            if (movedSincePlan && !mirrorWins) {
               const currentText = await readLocalText(ctx.app, entry.relPath);
               if (currentText !== pulled) {
                 const copyPath = await writeConflictCopy(
@@ -396,8 +413,8 @@ export async function executeDocPlan(
           }
 
           const presentNow = existsLocally(ctx.app, entry.relPath);
-          if (presentNow !== present || (presentNow && (await options.isEditorDirty(entry.relPath) ||
-              (entry.localHash !== undefined && await ctx.hashText(await readLocalText(ctx.app, entry.relPath)) !== entry.localHash)))) {
+          if (presentNow !== present || (presentNow && ((await options.isEditorDirty(entry.relPath)) ||
+              (!mirrorWins && entry.localHash !== undefined && await ctx.hashText(await readLocalText(ctx.app, entry.relPath)) !== entry.localHash)))) {
             throw new Error("下载期间本地笔记已改变，未覆盖，请重新同步");
           }
           // 纯排版差异保留本地布局，仅修复 Obsidian 必需的公式空白与转义。
@@ -440,7 +457,7 @@ export async function executeDocPlan(
             return;
           }
 
-          if (entry.action === "create-local" && present) {
+          if (entry.action === "create-local" && present && !mirrorWins) {
             const currentText = await readLocalText(ctx.app, entry.relPath);
             if (currentText !== pulled) {
               const copyPath = await writeConflictCopy(
@@ -458,6 +475,16 @@ export async function executeDocPlan(
               });
               tick(`冲突 ${entry.relPath}`);
               return;
+            }
+          }
+
+          // 二开：镜像档覆盖本地前，把本地旧版另存副本（含计划期已判定的冲突项）
+          let localBackupPath: string | undefined;
+          if (present && mirrorWins) {
+            const currentText = await readLocalText(ctx.app, entry.relPath);
+            if (currentText !== pulled) {
+              localBackupPath = await backupLocalVersion(entry.relPath, currentText);
+              ctx.logger.warn(`镜像档：${entry.relPath} 远端覆盖本地，本地旧版已另存副本 ${localBackupPath}`);
             }
           }
 
@@ -481,7 +508,9 @@ export async function executeDocPlan(
             relPath: entry.relPath,
             action: entry.action,
             ok: true,
-            message: imageWarnings.length > 0 ? imageWarnings.join("；") : undefined,
+            message: localBackupPath
+              ? `${imageWarnings.length > 0 ? imageWarnings.join("；") + "；" : ""}镜像档已用远端覆盖本地，本地旧版副本：${localBackupPath}`
+              : imageWarnings.length > 0 ? imageWarnings.join("；") : undefined,
           });
           tick(`下载 ${entry.relPath}`);
         } catch (error) {

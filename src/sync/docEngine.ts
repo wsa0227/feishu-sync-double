@@ -5,7 +5,7 @@ import { FeishuClient } from "../feishu/client";
 import { fetchDocumentMarkdown } from "../feishu/docs";
 import { batchQueryMetas } from "../feishu/files";
 import type { ResolvedWikiRoot, WikiSpace, WikiTreeEntry } from "../feishu/wiki";
-import { listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
+import { getNodeByToken, listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
 import type { Logger } from "../log";
 import type { ResolvedImage, RulesFile } from "../convert/rules";
 import { loadRules, normalizeRemoteImageUrls, publishRulesFingerprint, pullRulesFingerprint } from "../convert/rules";
@@ -44,6 +44,11 @@ export class DocSyncEngine {
 
   async listSpaces(): Promise<WikiSpace[]> {
     return listSpaces(this.createClient());
+  }
+
+  /** 二开：按节点令牌解析知识库节点（添加知识库向导用）。 */
+  async resolveWikiNode(token: string) {
+    return getNodeByToken(this.createClient(), token, "wiki");
   }
 
   async run(options: RunOptions): Promise<RunResult> {
@@ -206,6 +211,7 @@ export class DocSyncEngine {
         forcePush: options.forcePush === true,
         remoteModifiedTimes,
         verifyRemoteByContent: settings.docVerifyRemoteByContent,
+        conflictPolicy: settings.conflictPolicy ?? "keep-both",
         readLocal: (relPath) => readLocalText(this.deps.app, relPath),
         hashText: (text) => this.hashText(text),
         hashFetched: (text) => this.hashFetched(text),
@@ -315,6 +321,7 @@ export class DocSyncEngine {
       hashBytes: (bytes) => this.hashBytes(bytes),
       resolveImage: this.imageResolver(),
       readBinary: (vaultPath) => readLocalBytes(this.deps.app, vaultPath),
+      conflictPolicy: context.settings.conflictPolicy ?? "keep-both",
     };
 
     try {

@@ -65,6 +65,9 @@ var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
@@ -79,13 +82,304 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+// src/sync/types.ts
+function emptyState() {
+  return { records: {}, folders: {}, conflicts: {}, docRecords: {}, images: {}, imageUploads: {} };
+}
+function ensureOAuthScopes(scope) {
+  const scopes = scope.split(/\s+/).filter(Boolean);
+  for (const required of REQUIRED_OAUTH_SCOPES) {
+    if (!scopes.includes(required))
+      scopes.push(required);
+  }
+  return scopes.join(" ");
+}
+function summarize(items) {
+  const counts = {};
+  for (const item3 of items) {
+    counts[item3.action] = (counts[item3.action] ?? 0) + 1;
+  }
+  return counts;
+}
+function dirnameOf(relPath) {
+  const index = relPath.lastIndexOf("/");
+  return index === -1 ? "" : relPath.slice(0, index);
+}
+function basenameOf(relPath) {
+  const index = relPath.lastIndexOf("/");
+  return index === -1 ? relPath : relPath.slice(index + 1);
+}
+function joinPath(dir, name) {
+  return dir ? `${dir}/${name}` : name;
+}
+function normalizeLocalFolder(folder) {
+  return folder.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+}
+function prefixLocalPath(folder, relPath) {
+  const prefix = normalizeLocalFolder(folder);
+  return prefix ? joinPath(prefix, relPath) : relPath;
+}
+function stripLocalFolder(folder, relPath) {
+  const prefix = normalizeLocalFolder(folder);
+  if (!prefix)
+    return relPath;
+  if (relPath === prefix)
+    return "";
+  const marker = `${prefix}/`;
+  return relPath.startsWith(marker) ? relPath.slice(marker.length) : relPath;
+}
+var ACTION_LABELS, REQUIRED_OAUTH_SCOPES, CONFLICT_DIR, DEFAULT_SETTINGS;
+var init_types = __esm({
+  "src/sync/types.ts"() {
+    "use strict";
+    ACTION_LABELS = {
+      skip: "\u5DF2\u540C\u6B65",
+      push: "\u4E0A\u4F20\u8986\u76D6",
+      "create-remote": "\u4E0A\u4F20\u65B0\u5EFA",
+      pull: "\u62C9\u53D6\u8986\u76D6",
+      "create-local": "\u62C9\u53D6\u65B0\u5EFA",
+      link: "\u5EFA\u7ACB\u6620\u5C04",
+      conflict: "\u51B2\u7A81",
+      "delete-remote": "\u5220\u9664\u8FDC\u7AEF",
+      "delete-local": "\u5220\u9664\u672C\u5730",
+      "local-deleted": "\u672C\u5730\u5DF2\u5220\u9664",
+      "remote-deleted": "\u8FDC\u7AEF\u5DF2\u5220\u9664",
+      "empty-local": "\u8DF3\u8FC7\u7A7A\u6587\u4EF6",
+      "dirty-editor": "\u8DF3\u8FC7\uFF08\u7F16\u8F91\u4E2D\uFF09",
+      forget: "\u6E05\u7406\u6620\u5C04"
+    };
+    REQUIRED_OAUTH_SCOPES = ["wiki:node:read", "wiki:node:retrieve"];
+    CONFLICT_DIR = ".obsidian/feishu-sync/conflicts";
+    DEFAULT_SETTINGS = {
+      authMode: "user",
+      appId: "",
+      appSecret: "",
+      oauthScope: ensureOAuthScopes("drive:drive wiki:wiki docs:document.media:download docs:document.media:upload docx:document offline_access"),
+      redirectUri: "http://localhost:7634/callback",
+      spaceId: "",
+      rootNodeToken: "",
+      rootPageTitle: "",
+      includeRootPage: true,
+      localFolder: "",
+      restoreLocalDeleted: false,
+      syncMode: "md",
+      folderMode: "nodes",
+      flatSeparator: "__",
+      excludePatterns: ".trash/**",
+      recreateRemoteIfDeleted: false,
+      propagateLocalDelete: false,
+      propagateRemoteDelete: false,
+      attachmentFolder: "attachments",
+      docVerifyRemoteByContent: false,
+      attachmentLinkStyle: "shortest",
+      showPlanBeforeSync: true,
+      autoSyncMinutes: 0,
+      debugLog: false,
+      state: emptyState(),
+      syncDirection: "both",
+      conflictPolicy: "keep-both"
+    };
+  }
+});
+
+// src/sync/profileStore.ts
+var profileStore_exports = {};
+__export(profileStore_exports, {
+  activateProfile: () => activateProfile,
+  activeProfile: () => activeProfile,
+  conflictPolicyLabel: () => conflictPolicyLabel,
+  createAndActivateProfile: () => createAndActivateProfile,
+  deleteProfile: () => deleteProfile,
+  directionLabel: () => directionLabel,
+  ensureProfilesMigrated: () => ensureProfilesMigrated,
+  newProfileId: () => newProfileId,
+  parseWikiInput: () => parseWikiInput,
+  sanitizeDirName: () => sanitizeDirName,
+  suggestLocalFolder: () => suggestLocalFolder,
+  syncSettingsIntoActiveProfile: () => syncSettingsIntoActiveProfile
+});
+function newProfileId() {
+  return `p_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+function snapshotTarget(settings) {
+  return {
+    spaceId: settings.spaceId,
+    rootNodeToken: settings.rootNodeToken,
+    rootPageTitle: settings.rootPageTitle,
+    includeRootPage: settings.includeRootPage,
+    localFolder: settings.localFolder,
+    syncMode: settings.syncMode,
+    folderMode: settings.folderMode,
+    flatSeparator: settings.flatSeparator,
+    excludePatterns: settings.excludePatterns,
+    attachmentFolder: settings.attachmentFolder,
+    attachmentLinkStyle: settings.attachmentLinkStyle,
+    docVerifyRemoteByContent: settings.docVerifyRemoteByContent,
+    autoSyncMinutes: settings.autoSyncMinutes,
+    restoreLocalDeleted: settings.restoreLocalDeleted,
+    recreateRemoteIfDeleted: settings.recreateRemoteIfDeleted,
+    propagateLocalDelete: settings.propagateLocalDelete,
+    propagateRemoteDelete: settings.propagateRemoteDelete,
+    showPlanBeforeSync: settings.showPlanBeforeSync
+  };
+}
+function applyTarget(settings, target) {
+  for (const key of TARGET_FIELD_KEYS) {
+    settings[key] = target[key];
+  }
+}
+function defaultProfileName(settings) {
+  if (settings.localFolder)
+    return settings.localFolder.split("/").filter(Boolean).pop();
+  if (settings.spaceId)
+    return `\u7A7A\u95F4 ${settings.spaceId}`;
+  return "\u9ED8\u8BA4\u76EE\u6807";
+}
+function ensureProfilesMigrated(settings) {
+  if (settings.profiles && settings.activeProfileId && settings.profiles.some((item3) => item3.id === settings.activeProfileId)) {
+    return false;
+  }
+  const existing = settings.profiles ?? [];
+  const profile = {
+    id: "default",
+    name: defaultProfileName(settings),
+    direction: settings.syncDirection ?? "both",
+    conflictPolicy: settings.conflictPolicy ?? "keep-both",
+    target: snapshotTarget(settings),
+    state: settings.state
+  };
+  const merged = existing.some((item3) => item3.id === "default") ? existing.map((item3) => item3.id === "default" ? profile : item3) : [profile, ...existing];
+  settings.profiles = merged;
+  settings.activeProfileId = "default";
+  settings.syncDirection = profile.direction;
+  settings.conflictPolicy = profile.conflictPolicy;
+  return true;
+}
+function activeProfile(settings) {
+  return settings.profiles?.find((item3) => item3.id === settings.activeProfileId);
+}
+function syncSettingsIntoActiveProfile(settings) {
+  const profile = activeProfile(settings);
+  if (!profile)
+    return;
+  profile.target = snapshotTarget(settings);
+  profile.state = settings.state;
+  profile.direction = settings.syncDirection ?? profile.direction;
+  profile.conflictPolicy = settings.conflictPolicy ?? profile.conflictPolicy;
+}
+function activateProfile(settings, profileId) {
+  const profiles = settings.profiles ?? [];
+  const next = profiles.find((item3) => item3.id === profileId);
+  if (!next)
+    return false;
+  if (next.id === settings.activeProfileId)
+    return true;
+  syncSettingsIntoActiveProfile(settings);
+  applyTarget(settings, next.target);
+  settings.state = next.state ?? emptyState();
+  settings.activeProfileId = next.id;
+  settings.syncDirection = next.direction;
+  settings.conflictPolicy = next.conflictPolicy;
+  return true;
+}
+function createAndActivateProfile(settings, profile) {
+  const created = { ...profile, state: profile.state ?? emptyState() };
+  settings.profiles = [...settings.profiles ?? [], created];
+  settings.activeProfileId = created.id;
+  applyTarget(settings, created.target);
+  settings.state = created.state;
+  settings.syncDirection = created.direction;
+  settings.conflictPolicy = created.conflictPolicy;
+  return created;
+}
+function deleteProfile(settings, profileId) {
+  const profiles = settings.profiles ?? [];
+  const remaining = profiles.filter((item3) => item3.id !== profileId);
+  if (remaining.length === profiles.length)
+    return false;
+  settings.profiles = remaining;
+  if (settings.activeProfileId !== profileId)
+    return true;
+  const fallback = remaining[0];
+  if (fallback) {
+    activateProfile(settings, fallback.id);
+  } else {
+    settings.activeProfileId = "default";
+    settings.syncDirection = "both";
+    settings.conflictPolicy = "keep-both";
+    settings.state = emptyState();
+    applyTarget(settings, { ...snapshotTarget(settings), spaceId: "", rootNodeToken: "", localFolder: "" });
+  }
+  return true;
+}
+function parseWikiInput(raw) {
+  const value = raw.trim();
+  if (!value)
+    return { kind: "invalid", reason: "\u8BF7\u5148\u7C98\u8D34\u77E5\u8BC6\u5E93\u94FE\u63A5\u6216\u8282\u70B9\u4EE4\u724C" };
+  if (/^https?:\/\//i.test(value) || value.includes("/wiki/")) {
+    const spaceMatch = /\/wiki\/space\/([0-9]+)/.exec(value);
+    if (spaceMatch)
+      return { kind: "space", spaceId: spaceMatch[1] };
+    const nodeMatch = /\/wiki\/([A-Za-z0-9_-]+)/.exec(value);
+    if (nodeMatch && nodeMatch[1] !== "space")
+      return { kind: "node", token: nodeMatch[1] };
+    return { kind: "invalid", reason: "\u65E0\u6CD5\u4ECE\u94FE\u63A5\u91CC\u8BC6\u522B\u8282\u70B9\u6216\u7A7A\u95F4\uFF0C\u8BF7\u786E\u8BA4\u590D\u5236\u7684\u662F /wiki/ \u9875\u9762\u94FE\u63A5" };
+  }
+  if (/\s/.test(value) || value.length < 8)
+    return { kind: "invalid", reason: "\u5185\u5BB9\u4E0D\u50CF\u8282\u70B9\u4EE4\u724C\uFF0C\u8BF7\u7C98\u8D34 /wiki/ \u9875\u9762\u94FE\u63A5" };
+  return { kind: "node", token: value };
+}
+function sanitizeDirName(name) {
+  return name.replace(ILLEGAL_DIR_CHARS, "").replace(/\s+/g, " ").trim();
+}
+function suggestLocalFolder(currentLocalFolder, knowledgeBaseName) {
+  const cleanName = sanitizeDirName(knowledgeBaseName) || "\u77E5\u8BC6\u5E93";
+  const segments = currentLocalFolder.split("/").filter(Boolean);
+  const base = segments.length > 0 ? segments[0] : "\u98DE\u4E66\u540C\u6B65";
+  return `${base}/${cleanName}`;
+}
+function directionLabel(direction) {
+  return direction === "pull" ? "\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09" : direction === "push" ? "\u4EC5\u63A8\u9001" : "\u53CC\u5411\u534F\u4F5C";
+}
+function conflictPolicyLabel(policy) {
+  return policy === "remote-wins" ? "\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF08\u672C\u5730\u65E7\u7248\u53E6\u5B58\u526F\u672C\uFF09" : "\u4FDD\u7559\u53CC\u65B9";
+}
+var TARGET_FIELD_KEYS, ILLEGAL_DIR_CHARS;
+var init_profileStore = __esm({
+  "src/sync/profileStore.ts"() {
+    "use strict";
+    init_types();
+    TARGET_FIELD_KEYS = [
+      "spaceId",
+      "rootNodeToken",
+      "rootPageTitle",
+      "includeRootPage",
+      "localFolder",
+      "syncMode",
+      "folderMode",
+      "flatSeparator",
+      "excludePatterns",
+      "attachmentFolder",
+      "attachmentLinkStyle",
+      "docVerifyRemoteByContent",
+      "autoSyncMinutes",
+      "restoreLocalDeleted",
+      "recreateRemoteIfDeleted",
+      "propagateLocalDelete",
+      "propagateRemoteDelete",
+      "showPlanBeforeSync"
+    ];
+    ILLEGAL_DIR_CHARS = /[\\/:*?"<>|#^[\]]/g;
+  }
+});
+
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
   default: () => FeishuWikiSyncPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian12 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 var import_crypto2 = require("crypto");
 
 // src/feishu/client.ts
@@ -665,98 +959,7 @@ async function ensureFolder(adapter, folderPath) {
 
 // src/settings-tab.ts
 var import_obsidian4 = require("obsidian");
-
-// src/sync/types.ts
-var ACTION_LABELS = {
-  skip: "\u5DF2\u540C\u6B65",
-  push: "\u4E0A\u4F20\u8986\u76D6",
-  "create-remote": "\u4E0A\u4F20\u65B0\u5EFA",
-  pull: "\u62C9\u53D6\u8986\u76D6",
-  "create-local": "\u62C9\u53D6\u65B0\u5EFA",
-  link: "\u5EFA\u7ACB\u6620\u5C04",
-  conflict: "\u51B2\u7A81",
-  "delete-remote": "\u5220\u9664\u8FDC\u7AEF",
-  "delete-local": "\u5220\u9664\u672C\u5730",
-  "local-deleted": "\u672C\u5730\u5DF2\u5220\u9664",
-  "remote-deleted": "\u8FDC\u7AEF\u5DF2\u5220\u9664",
-  "empty-local": "\u8DF3\u8FC7\u7A7A\u6587\u4EF6",
-  "dirty-editor": "\u8DF3\u8FC7\uFF08\u7F16\u8F91\u4E2D\uFF09",
-  forget: "\u6E05\u7406\u6620\u5C04"
-};
-function emptyState() {
-  return { records: {}, folders: {}, conflicts: {}, docRecords: {}, images: {}, imageUploads: {} };
-}
-var REQUIRED_OAUTH_SCOPES = ["wiki:node:read", "wiki:node:retrieve"];
-function ensureOAuthScopes(scope) {
-  const scopes = scope.split(/\s+/).filter(Boolean);
-  for (const required of REQUIRED_OAUTH_SCOPES) {
-    if (!scopes.includes(required))
-      scopes.push(required);
-  }
-  return scopes.join(" ");
-}
-var CONFLICT_DIR = ".obsidian/feishu-sync/conflicts";
-var DEFAULT_SETTINGS = {
-  authMode: "user",
-  appId: "",
-  appSecret: "",
-  oauthScope: ensureOAuthScopes("drive:drive wiki:wiki docs:document.media:download docs:document.media:upload docx:document offline_access"),
-  redirectUri: "http://localhost:7634/callback",
-  spaceId: "",
-  rootNodeToken: "",
-  rootPageTitle: "",
-  includeRootPage: true,
-  localFolder: "",
-  restoreLocalDeleted: false,
-  syncMode: "md",
-  folderMode: "nodes",
-  flatSeparator: "__",
-  excludePatterns: ".trash/**",
-  recreateRemoteIfDeleted: false,
-  propagateLocalDelete: false,
-  propagateRemoteDelete: false,
-  attachmentFolder: "attachments",
-  docVerifyRemoteByContent: false,
-  attachmentLinkStyle: "shortest",
-  showPlanBeforeSync: true,
-  autoSyncMinutes: 0,
-  debugLog: false,
-  state: emptyState()
-};
-function summarize(items) {
-  const counts = {};
-  for (const item3 of items) {
-    counts[item3.action] = (counts[item3.action] ?? 0) + 1;
-  }
-  return counts;
-}
-function dirnameOf(relPath) {
-  const index = relPath.lastIndexOf("/");
-  return index === -1 ? "" : relPath.slice(0, index);
-}
-function basenameOf(relPath) {
-  const index = relPath.lastIndexOf("/");
-  return index === -1 ? relPath : relPath.slice(index + 1);
-}
-function joinPath(dir, name) {
-  return dir ? `${dir}/${name}` : name;
-}
-function normalizeLocalFolder(folder) {
-  return folder.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
-}
-function prefixLocalPath(folder, relPath) {
-  const prefix = normalizeLocalFolder(folder);
-  return prefix ? joinPath(prefix, relPath) : relPath;
-}
-function stripLocalFolder(folder, relPath) {
-  const prefix = normalizeLocalFolder(folder);
-  if (!prefix)
-    return relPath;
-  if (relPath === prefix)
-    return "";
-  const marker = `${prefix}/`;
-  return relPath.startsWith(marker) ? relPath.slice(marker.length) : relPath;
-}
+init_types();
 
 // src/convert/rules.ts
 var import_obsidian3 = require("obsidian");
@@ -1694,6 +1897,7 @@ function pullRulesFingerprint(rules) {
 }
 
 // src/settings-tab.ts
+init_profileStore();
 var SpacePickerModal = class extends import_obsidian4.FuzzySuggestModal {
   constructor(app, spaces, onChoose) {
     super(app);
@@ -1725,11 +1929,90 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       text: "\u5C06\u5F53\u524D\u4ED3\u5E93\u7684 Markdown \u7B14\u8BB0\u4E0E\u98DE\u4E66\u77E5\u8BC6\u5E93\u53CC\u5411\u540C\u6B65\u3002\u6587\u6863\u6A21\u5F0F\u4FBF\u4E8E\u5728\u98DE\u4E66\u9605\u8BFB\u4E0E\u7F16\u8F91\uFF1B\u6587\u4EF6\u955C\u50CF\u6A21\u5F0F\u4FDD\u7559\u539F\u59CB Markdown\u3002"
     });
     this.renderAuth(containerEl, settings);
+    this.renderTargetAndProfile(containerEl, settings);
     this.renderTarget(containerEl, settings);
     this.renderSyncMode(containerEl, settings);
     this.renderRules(containerEl);
     this.renderBehaviour(containerEl, settings);
     this.renderState(containerEl, settings);
+  }
+  /** 二开：目标切换、档位与冲突策略。 */
+  renderTargetAndProfile(containerEl, settings) {
+    const profiles = settings.profiles ?? [];
+    const active = profiles.find((item3) => item3.id === settings.activeProfileId);
+    const direction = settings.syncDirection ?? "both";
+    new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u76EE\u6807\u4E0E\u6863\u4F4D").setHeading();
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "\u4E00\u4E2A\u76EE\u6807 = \u4E00\u4E2A\u77E5\u8BC6\u5E93\uFF08\u7A7A\u95F4/\u6839\u8282\u70B9\uFF09+ \u4E00\u4E2A\u672C\u5730\u76EE\u5F55 + \u4E00\u4E2A\u65B9\u5411\u6863\u4F4D\u3002\u6362\u5E93\u5B66\u4E60\u6DFB\u52A0\u65B0\u76EE\u6807\u5373\u53EF\uFF0C\u4E0D\u7528\u6765\u56DE\u6539\u914D\u7F6E\u3002"
+    });
+    const switchSetting = new import_obsidian4.Setting(containerEl).setName("\u5F53\u524D\u76EE\u6807");
+    if (profiles.length > 1) {
+      switchSetting.addDropdown((dropdown) => {
+        for (const profile of profiles) {
+          dropdown.addOption(profile.id, `${profile.name}\uFF08${directionLabel(profile.direction)}\uFF09`);
+        }
+        dropdown.setValue(settings.activeProfileId ?? profiles[0]?.id ?? "");
+        dropdown.onChange(async (value) => {
+          if (value === settings.activeProfileId)
+            return;
+          await this.activateById(value);
+        });
+      });
+    }
+    switchSetting.addButton(
+      (button) => button.setButtonText(profiles.length > 1 ? "\u5207\u6362\u2026" : "\u5207\u6362\u76EE\u6807\u2026").onClick(() => this.host.openTargetSwitcher())
+    );
+    switchSetting.addButton((button) => button.setButtonText("\u2795 \u6DFB\u52A0\u77E5\u8BC6\u5E93").setCta().onClick(() => this.host.openAddWikiWizard()));
+    new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u6863\u4F4D\uFF08\u65B9\u5411\uFF09").setDesc(
+      "\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09\uFF1A\u53EA\u628A\u8FDC\u7AEF\u5185\u5BB9\u62C9\u5230\u672C\u5730\uFF0C\u51B2\u7A81\u9ED8\u8BA4\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF08\u672C\u5730\u65E7\u7248\u81EA\u52A8\u53E6\u5B58\u526F\u672C\uFF09\uFF0C\u9002\u5408\u5B66\u4E60\u522B\u4EBA\u7684\u77E5\u8BC6\u5E93\uFF1B\u53CC\u5411\u534F\u4F5C\uFF1A\u4E24\u8FB9\u4E92\u76F8\u540C\u6B65\uFF0C\u51B2\u7A81\u4FDD\u7559\u53CC\u65B9\uFF1B\u4EC5\u63A8\u9001\uFF1A\u5B9A\u671F\u628A\u672C\u5730\u5185\u5BB9\u53D1\u5E03\u5230\u8FDC\u7AEF\u3002\u72B6\u6001\u680F\u4E0E\u4FA7\u680F\u6309\u94AE\u6309\u6863\u4F4D\u6267\u884C\u3002"
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("pull", "\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09").addOption("both", "\u53CC\u5411\u534F\u4F5C").addOption("push", "\u4EC5\u63A8\u9001").setValue(direction).onChange(async (value) => {
+        settings.syncDirection = value === "pull" ? "pull" : value === "push" ? "push" : "both";
+        if (active && settings.syncDirection === "pull") {
+          active.conflictPolicy = "remote-wins";
+          settings.conflictPolicy = "remote-wins";
+          settings.restoreLocalDeleted = active.target.restoreLocalDeleted = true;
+          settings.propagateLocalDelete = active.target.propagateLocalDelete = false;
+          settings.propagateRemoteDelete = active.target.propagateRemoteDelete = false;
+        }
+        if (active)
+          active.direction = settings.syncDirection;
+        await this.host.saveSettings();
+        this.host.updateStatusBar();
+        this.display();
+      })
+    );
+    if (direction === "pull") {
+      new import_obsidian4.Setting(containerEl).setName("\u955C\u50CF\u6863\u51B2\u7A81\u7B56\u7565").setDesc(
+        "\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF1A\u672C\u5730\u662F\u8FDC\u7AEF\u7684\u955C\u50CF\uFF0C\u51B2\u7A81\u65F6\u4EE5\u8FDC\u7AEF\u4E3A\u51C6\uFF0C\u672C\u5730\u6539\u52A8\u81EA\u52A8\u53E6\u5B58\u5230 .obsidian/feishu-sync/conflicts/\u3002\u4FDD\u7559\u53CC\u65B9\uFF1A\u6CBF\u7528\u4E0A\u6E38\u884C\u4E3A\uFF0C\u751F\u6210\u51B2\u7A81\u526F\u672C\u7B49\u5F85\u4EBA\u5DE5\u5904\u7406\u3002"
+      ).addDropdown(
+        (dropdown) => dropdown.addOption("remote-wins", "\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF08\u63A8\u8350\uFF09").addOption("keep-both", "\u4FDD\u7559\u53CC\u65B9").setValue(settings.conflictPolicy ?? "remote-wins").onChange(async (value) => {
+          const policy = value === "keep-both" ? "keep-both" : "remote-wins";
+          settings.conflictPolicy = policy;
+          if (active)
+            active.conflictPolicy = policy;
+          await this.host.saveSettings();
+        })
+      );
+    }
+    if (active) {
+      new import_obsidian4.Setting(containerEl).setName("\u76EE\u6807\u540D\u79F0").setDesc("\u4EC5\u7528\u4E8E\u5728\u5207\u6362\u5217\u8868\u91CC\u8FA8\u8BA4").addText(
+        (text) => text.setValue(active.name).onChange(async (value) => {
+          active.name = value.trim() || active.name;
+          await this.host.saveSettings();
+        })
+      );
+    }
+  }
+  async activateById(profileId) {
+    const { activateProfile: activateProfile2 } = (init_profileStore(), __toCommonJS(profileStore_exports));
+    if (activateProfile2(this.host.settings, profileId)) {
+      await this.host.saveSettings();
+      this.host.updateStatusBar();
+      this.host.refreshAutoSync();
+      this.display();
+    }
   }
   renderSyncMode(containerEl, settings) {
     new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u6A21\u5F0F").setHeading();
@@ -2083,9 +2366,11 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
 // src/sync/guards.ts
 var import_crypto = require("crypto");
 var import_obsidian6 = require("obsidian");
+init_types();
 
 // src/sync/scanner.ts
 var import_obsidian5 = require("obsidian");
+init_types();
 var ALWAYS_EXCLUDED = [".obsidian/**", ".trash/**", `${CONFLICT_DIR}/**`, "**/.DS_Store"];
 function assertSafeVaultPath(relPath) {
   if (!relPath || /[\\\x00-\x1f:]/.test(relPath) || relPath.split("/").some((part) => !part || part === "." || part === "..")) {
@@ -2527,6 +2812,7 @@ async function sha256Hex(data) {
 }
 
 // src/sync/executor.ts
+init_types();
 function two(value) {
   return String(value).padStart(2, "0");
 }
@@ -2981,6 +3267,7 @@ async function refreshRemoteModifiedTime(ctx, entries) {
 }
 
 // src/sync/planner.ts
+init_types();
 function item(relPath, action, reason, extra = {}) {
   return { relPath, action, reason, parentDir: dirnameOf(relPath), ...extra };
 }
@@ -3175,6 +3462,7 @@ async function checkRemoteChanged(input, record, remoteNote) {
 }
 
 // src/sync/engine.ts
+init_types();
 function parseTokenFromInput(input) {
   const value = input.trim();
   if (!value)
@@ -3203,6 +3491,10 @@ var SyncEngine = class {
   async listSpaces() {
     const client = this.createClient();
     return listSpaces(client);
+  }
+  /** 二开：按节点令牌解析知识库节点（添加知识库向导用）。 */
+  async resolveWikiNode(token) {
+    return getNodeByToken(this.createClient(), token, "wiki");
   }
   async run(options) {
     if (this.syncing)
@@ -3563,6 +3855,7 @@ async function fetchDocumentMarkdown(client, documentId) {
 }
 
 // src/sync/docPlanner.ts
+init_types();
 function documentTitleFor(relPath, settings) {
   const name = basenameOf(relPath).replace(/\.md$/i, "");
   if (settings.folderMode !== "flat")
@@ -3862,6 +4155,10 @@ async function buildDocPlan(input) {
         const extra2 = { ...remoteFields2, localHash: localHash2, remoteHash: hash2, localSize: localNote.size, localMtime: localNote.mtime };
         if (pulled2 === localText2 || normalizeImagesForCompare(pulled2) === normalizeImagesForCompare(localText2)) {
           items.push(item2(relPath, "link", "\u4E24\u8FB9\u5185\u5BB9\u4E00\u81F4\uFF0C\u53EA\u5EFA\u7ACB\u6620\u5C04", extra2));
+        } else if (input.conflictPolicy === "remote-wins") {
+          items.push(
+            item2(relPath, "pull", "\u955C\u50CF\u6863\uFF1A\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF08\u672C\u5730\u65E7\u7248\u5DF2\u53E6\u5B58\u526F\u672C\uFF09", { ...extra2, backupLocal: true })
+          );
         } else {
           items.push(conflictItem2(relPath, state, "\u9996\u6B21\u5BF9\u63A5\uFF1A\u540C\u540D\u6587\u6863\u4E24\u8FB9\u5185\u5BB9\u4E0D\u540C\uFF0C\u5DF2\u4FDD\u7559\u53CC\u65B9", extra2, localHash2, hash2));
         }
@@ -3895,16 +4192,22 @@ async function buildDocPlan(input) {
       const hash2 = remoteState2.hash ?? record.baseRemoteHash;
       const stamp = remoteState2.metaTime ? { remoteModifiedTime: remoteState2.metaTime } : {};
       if (remoteState2.changed) {
-        items.push(
-          conflictItem2(
-            relPath,
-            state,
-            "\u672C\u5730\u5DF2\u5220\u9664\u3001\u8FDC\u7AEF\u88AB\u4FEE\u6539\uFF1A\u4E3A\u907F\u514D\u4E22\u5185\u5BB9\uFF0C\u672A\u81EA\u52A8\u5904\u7406",
-            { ...remoteFields2, localHash: "", remoteHash: hash2 },
-            "",
-            hash2
-          )
-        );
+        if (input.conflictPolicy === "remote-wins") {
+          items.push(
+            item2(relPath, "create-local", "\u955C\u50CF\u6863\uFF1A\u672C\u5730\u5DF2\u5220\u9664\uFF0C\u8FDC\u7AEF\u4E3A\u552F\u4E00\u4E8B\u5B9E\u6E90\uFF0C\u6062\u590D\u6700\u65B0\u5185\u5BB9", { ...remoteFields2, remoteHash: hash2 })
+          );
+        } else {
+          items.push(
+            conflictItem2(
+              relPath,
+              state,
+              "\u672C\u5730\u5DF2\u5220\u9664\u3001\u8FDC\u7AEF\u88AB\u4FEE\u6539\uFF1A\u4E3A\u907F\u514D\u4E22\u5185\u5BB9\uFF0C\u672A\u81EA\u52A8\u5904\u7406",
+              { ...remoteFields2, localHash: "", remoteHash: hash2 },
+              "",
+              hash2
+            )
+          );
+        }
       } else if (input.propagateLocalDelete) {
         items.push(
           item2(relPath, "delete-remote", "\u672C\u5730\u5DF2\u5220\u9664\uFF0C\u6309\u8BBE\u7F6E\u5220\u9664\u8FDC\u7AEF\u6587\u6863\uFF08\u8FDB\u98DE\u4E66\u56DE\u6536\u7AD9\uFF0C\u53EF\u6062\u590D\uFF09", {
@@ -3967,8 +4270,12 @@ async function buildDocPlan(input) {
       pulledContent(input, relPath, remoteNote, localNote),
       readLocalCached(input, relPath)
     ]);
-    if (pulled === localText) {
+    if (pulled === localText || normalizeImagesForCompare(pulled) === normalizeImagesForCompare(localText)) {
       items.push(item2(relPath, "link", "\u4E24\u8FB9\u5185\u5BB9\u4E00\u81F4\uFF0C\u53EA\u66F4\u65B0\u57FA\u7EBF", extra));
+      continue;
+    }
+    if (input.conflictPolicy === "remote-wins") {
+      items.push(item2(relPath, "pull", "\u955C\u50CF\u6863\uFF1A\u4E24\u8FB9\u90FD\u6539\u8FC7\uFF0C\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF08\u672C\u5730\u65E7\u7248\u5DF2\u53E6\u5B58\u526F\u672C\uFF09", { ...extra, backupLocal: true }));
       continue;
     }
     items.push(conflictItem2(relPath, state, "\u4E24\u8FB9\u90FD\u6539\u8FC7\u4E14\u5185\u5BB9\u4E0D\u540C\uFF0C\u5DF2\u4FDD\u7559\u53CC\u65B9", extra, localHash, hash ?? localHash));
@@ -3994,6 +4301,7 @@ async function buildDocPlan(input) {
 
 // src/sync/docExecutor.ts
 var import_obsidian8 = require("obsidian");
+init_types();
 function two2(value) {
   return String(value).padStart(2, "0");
 }
@@ -4091,6 +4399,18 @@ async function executeDocPlan(plan, ctx, options) {
     await ensureFolder(ctx.app.vault.adapter, dirnameOf(copyPath));
     await ctx.app.vault.adapter.write(copyPath, remoteText);
     state.conflicts[relPath] = { remoteHash, localHash, copyPath, at: Date.now() };
+    return copyPath;
+  };
+  const backupLocalVersion = async (relPath, localText) => {
+    const copyPath = conflictCopyRelPath2(relPath);
+    await ensureFolder(ctx.app.vault.adapter, dirnameOf(copyPath));
+    await ctx.app.vault.adapter.write(copyPath, localText);
+    state.conflicts[relPath] = {
+      remoteHash: "",
+      localHash: await ctx.hashText(localText),
+      copyPath,
+      at: Date.now()
+    };
     return copyPath;
   };
   const pulls = plan.items.filter((entry) => entry.action === "pull" || entry.action === "create-local");
@@ -4255,10 +4575,11 @@ async function executeDocPlan(plan, ctx, options) {
           const remoteHash = await ctx.hashFetched(fetched);
           for (const warning of imageWarnings)
             ctx.logger.warn(`\u56FE\u7247\uFF1A${entry.relPath} ${warning}`);
+          const mirrorWins = ctx.conflictPolicy === "remote-wins" || entry.backupLocal === true;
           if (present && (entry.localSize !== void 0 || entry.localMtime !== void 0)) {
             const before = localStat(ctx.app, entry.relPath);
             const movedSincePlan = before.size !== entry.localSize || before.mtime !== entry.localMtime;
-            if (movedSincePlan) {
+            if (movedSincePlan && !mirrorWins) {
               const currentText = await readLocalText(ctx.app, entry.relPath);
               if (currentText !== pulled) {
                 const copyPath = await writeConflictCopy(
@@ -4303,7 +4624,7 @@ async function executeDocPlan(plan, ctx, options) {
             return;
           }
           const presentNow = existsLocally2(ctx.app, entry.relPath);
-          if (presentNow !== present || presentNow && (await options.isEditorDirty(entry.relPath) || entry.localHash !== void 0 && await ctx.hashText(await readLocalText(ctx.app, entry.relPath)) !== entry.localHash)) {
+          if (presentNow !== present || presentNow && (await options.isEditorDirty(entry.relPath) || !mirrorWins && entry.localHash !== void 0 && await ctx.hashText(await readLocalText(ctx.app, entry.relPath)) !== entry.localHash)) {
             throw new Error("\u4E0B\u8F7D\u671F\u95F4\u672C\u5730\u7B14\u8BB0\u5DF2\u6539\u53D8\uFF0C\u672A\u8986\u76D6\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
           }
           if (present && localTextBefore !== pulled && sameAfterCosmeticRules(
@@ -4344,7 +4665,7 @@ async function executeDocPlan(plan, ctx, options) {
             tick(`${repaired ? "\u4FEE\u590D\u516C\u5F0F" : "\u8DF3\u8FC7"} ${entry.relPath}`);
             return;
           }
-          if (entry.action === "create-local" && present) {
+          if (entry.action === "create-local" && present && !mirrorWins) {
             const currentText = await readLocalText(ctx.app, entry.relPath);
             if (currentText !== pulled) {
               const copyPath = await writeConflictCopy(
@@ -4362,6 +4683,14 @@ async function executeDocPlan(plan, ctx, options) {
               });
               tick(`\u51B2\u7A81 ${entry.relPath}`);
               return;
+            }
+          }
+          let localBackupPath;
+          if (present && mirrorWins) {
+            const currentText = await readLocalText(ctx.app, entry.relPath);
+            if (currentText !== pulled) {
+              localBackupPath = await backupLocalVersion(entry.relPath, currentText);
+              ctx.logger.warn(`\u955C\u50CF\u6863\uFF1A${entry.relPath} \u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF0C\u672C\u5730\u65E7\u7248\u5DF2\u53E6\u5B58\u526F\u672C ${localBackupPath}`);
             }
           }
           await writeLocalBytes(ctx.app, entry.relPath, encodeText(pulled));
@@ -4384,7 +4713,7 @@ async function executeDocPlan(plan, ctx, options) {
             relPath: entry.relPath,
             action: entry.action,
             ok: true,
-            message: imageWarnings.length > 0 ? imageWarnings.join("\uFF1B") : void 0
+            message: localBackupPath ? `${imageWarnings.length > 0 ? imageWarnings.join("\uFF1B") + "\uFF1B" : ""}\u955C\u50CF\u6863\u5DF2\u7528\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF0C\u672C\u5730\u65E7\u7248\u526F\u672C\uFF1A${localBackupPath}` : imageWarnings.length > 0 ? imageWarnings.join("\uFF1B") : void 0
           });
           tick(`\u4E0B\u8F7D ${entry.relPath}`);
         } catch (error) {
@@ -4794,6 +5123,7 @@ async function prepareRemoteImages(ctx, fetched, options) {
 }
 
 // src/sync/docEngine.ts
+init_types();
 var DocSyncEngine = class {
   constructor(deps) {
     this.deps = deps;
@@ -4807,6 +5137,10 @@ var DocSyncEngine = class {
   }
   async listSpaces() {
     return listSpaces(this.createClient());
+  }
+  /** 二开：按节点令牌解析知识库节点（添加知识库向导用）。 */
+  async resolveWikiNode(token) {
+    return getNodeByToken(this.createClient(), token, "wiki");
   }
   async run(options) {
     if (this.syncing)
@@ -4955,6 +5289,7 @@ var DocSyncEngine = class {
         forcePush: options.forcePush === true,
         remoteModifiedTimes,
         verifyRemoteByContent: settings.docVerifyRemoteByContent,
+        conflictPolicy: settings.conflictPolicy ?? "keep-both",
         readLocal: (relPath) => readLocalText(this.deps.app, relPath),
         hashText: (text) => this.hashText(text),
         hashFetched: (text) => this.hashFetched(text),
@@ -5041,7 +5376,8 @@ var DocSyncEngine = class {
       hashFetched: (text) => this.hashFetched(text),
       hashBytes: (bytes) => this.hashBytes(bytes),
       resolveImage: this.imageResolver(),
-      readBinary: (vaultPath) => readLocalBytes(this.deps.app, vaultPath)
+      readBinary: (vaultPath) => readLocalBytes(this.deps.app, vaultPath),
+      conflictPolicy: context.settings.conflictPolicy ?? "keep-both"
     };
     try {
       const report = await executeDocPlan(planForRun, execContext, {
@@ -5107,6 +5443,9 @@ function touchedRelPaths(report) {
   return touched;
 }
 
+// src/main.ts
+init_types();
+
 // src/ui/auth-modal.ts
 var import_obsidian9 = require("obsidian");
 var AuthCodeModal = class extends import_obsidian9.Modal {
@@ -5170,6 +5509,7 @@ function extractCode(input) {
 
 // src/ui/plan-modal.ts
 var import_obsidian10 = require("obsidian");
+init_types();
 
 // src/ui/format-warnings.ts
 function renderFormatWarnings(container, plan) {
@@ -5280,6 +5620,7 @@ function badgeClass(action) {
 
 // src/ui/report-modal.ts
 var import_obsidian11 = require("obsidian");
+init_types();
 var ReportModal = class extends import_obsidian11.Modal {
   constructor(app, plan, report, executed) {
     super(app);
@@ -5338,14 +5679,254 @@ function renderSection(container, title, entries, isConflict) {
   }
 }
 
+// src/ui/add-wiki-modal.ts
+var import_obsidian12 = require("obsidian");
+init_profileStore();
+var AddWikiModal = class extends import_obsidian12.Modal {
+  constructor(app, deps) {
+    super(app);
+    this.resolved = null;
+    this.scopeChoice = "node";
+    this.direction = "pull";
+    this.localFolder = "";
+    this.busy = false;
+    this.deps = deps;
+  }
+  onOpen() {
+    this.titleEl.setText("\u6DFB\u52A0\u98DE\u4E66\u77E5\u8BC6\u5E93");
+    this.contentEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "\u7C98\u8D34\u77E5\u8BC6\u5E93\u91CC\u4EFB\u610F\u9875\u9762\u7684 /wiki/ \u94FE\u63A5\uFF08\u522B\u4EBA\u7684\u516C\u5F00\u5E93\u3001\u4F60\u6709\u6743\u9650\u7684\u5E93\u90FD\u53EF\u4EE5\uFF09\uFF0C\u6216 /wiki/space/<id> \u7A7A\u95F4\u9875\u94FE\u63A5\u3002\u63D2\u4EF6\u4F1A\u81EA\u52A8\u89E3\u6790\u51FA\u7A7A\u95F4\u4E0E\u76EE\u5F55\uFF0C\u4E0D\u9700\u8981\u4F60\u53BB\u627E space_id\u3002"
+    });
+    const inputRow = new import_obsidian12.Setting(this.contentEl).setName("\u77E5\u8BC6\u5E93\u5730\u5740").setHeading();
+    inputRow.addText((text) => {
+      text.setPlaceholder("https://xxx.feishu.cn/wiki/\u2026 \u6216 /wiki/space/\u2026").onChange(() => {
+        this.resolved = null;
+        this.renderResult();
+      });
+      this.urlInput = text.inputEl;
+    });
+    inputRow.addButton((button) => button.setButtonText("\u89E3\u6790").setCta().onClick(() => void this.resolveInput()));
+    this.resultEl = this.contentEl.createDiv();
+    this.renderResult();
+  }
+  renderResult() {
+    this.resultEl.empty();
+    if (!this.resolved)
+      return;
+    const target = this.resolved;
+    const summary = this.resultEl.createDiv({ cls: "setting-item-description" });
+    summary.createEl("div", { text: `\u7A7A\u95F4\uFF1A${target.name}\uFF08${target.spaceId}\uFF09` });
+    if (target.nodeTitle) {
+      summary.createEl("div", { text: `\u8282\u70B9\uFF1A${target.nodeTitle}${target.hasChildren ? "\uFF08\u542B\u5B50\u9875\u9762\uFF09" : "\uFF08\u65E0\u5B50\u9875\u9762\uFF09"}` });
+    }
+    const scopeArea = this.resultEl.createDiv();
+    new import_obsidian12.Setting(scopeArea).setName("\u540C\u6B65\u8303\u56F4").setHeading();
+    if (target.spaceOnly) {
+      scopeArea.createEl("div", { cls: "setting-item-description", text: "\u7A7A\u95F4\u9875\u94FE\u63A5\uFF1A\u4EE5\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42\u4E3A\u540C\u6B65\u6839\uFF08\u8BE5\u5F62\u6001\u6CA1\u6709\u5355\u8282\u70B9\u6982\u5FF5\uFF09\u3002" });
+      this.scopeChoice = "space";
+    } else {
+      const preferSpace = !target.hasChildren;
+      this.scopeChoice = preferSpace ? "space" : "node";
+      const options = [
+        { value: "node", label: "\u4EC5\u8BE5\u8282\u70B9\u5B50\u6811", hint: "\u628A\u8FD9\u4E2A\u9875\u9762\uFF08\u542B\u6B63\u6587\uFF0C\u53EF\u9009\uFF09\u548C\u5B83\u7684\u5B50\u9875\u9762\u62C9\u5230\u672C\u5730\uFF1B\u63A8\u9001\u4E5F\u53EA\u53D1\u751F\u5728\u8FD9\u4E2A\u5B50\u6811\u91CC" },
+        { value: "space", label: "\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42", hint: "\u4EE5\u7A7A\u95F4\u9876\u5C42\u4E3A\u540C\u6B65\u6839\uFF1B\u9875\u9762\u672C\u8EAB\u662F\u9996\u9875\u6216\u6CA1\u6709\u5B50\u9875\u9762\u65F6\u66F4\u5408\u9002" }
+      ];
+      for (const option of options) {
+        const row = scopeArea.createDiv({ cls: "feishu-wiki-option-row" });
+        const radio = row.createEl("input", { type: "radio" });
+        radio.name = "feishu-add-scope";
+        radio.value = option.value;
+        radio.checked = this.scopeChoice === option.value;
+        radio.addEventListener("change", () => {
+          if (radio.checked)
+            this.scopeChoice = option.value;
+        });
+        const box = row.createDiv();
+        box.createEl("div", { text: option.label });
+        box.createEl("div", { cls: "setting-item-description", text: option.hint });
+      }
+      if (preferSpace) {
+        scopeArea.createEl("div", {
+          cls: "setting-item-description",
+          text: "\u63D0\u793A\uFF1A\u8BE5\u8282\u70B9\u6CA1\u6709\u5B50\u9875\u9762\uFF0C\u4EE5\u5B83\u4E3A\u6839\u4F1A\u62C9\u5230\u7A7A\u5185\u5BB9\uFF0C\u5DF2\u9ED8\u8BA4\u9009\u300C\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42\u300D\u3002"
+        });
+      }
+    }
+    this.localFolder = suggestLocalFolder(this.deps.settings().localFolder, target.name);
+    new import_obsidian12.Setting(this.resultEl).setName("\u672C\u5730\u540C\u6B65\u76EE\u5F55").setDesc("\u76F8\u5BF9 vault \u6839\u76EE\u5F55\uFF1B\u76EE\u5F55\u5DF2\u6709\u5185\u5BB9\u65F6\uFF0C\u9996\u6B21\u540C\u6B65\u4F1A\u6309\u300C\u4E24\u8FB9\u5185\u5BB9\u4E00\u81F4\u624D\u5EFA\u6620\u5C04\u300D\u5904\u7406").addText((text) => {
+      text.setValue(this.localFolder).onChange((value) => {
+        this.localFolder = value.trim();
+      });
+    });
+    new import_obsidian12.Setting(this.resultEl).setName("\u540C\u6B65\u65B9\u5F0F").setHeading();
+    const directionOptions = [
+      { value: "pull", label: "\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09", hint: "\u53EA\u628A\u8FDC\u7AEF\u5185\u5BB9\u62C9\u5230\u672C\u5730\u5B66\u4E60\uFF1B\u51B2\u7A81\u9ED8\u8BA4\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF0C\u672C\u5730\u65E7\u7248\u81EA\u52A8\u53E6\u5B58\u526F\u672C" },
+      { value: "both", label: "\u53CC\u5411\u534F\u4F5C", hint: "\u672C\u5730\u4E0E\u8FDC\u7AEF\u4E92\u76F8\u540C\u6B65\uFF1B\u9002\u5408\u4F60\u81EA\u5DF1\u6709\u7F16\u8F91\u6743\u9650\u3001\u4E24\u8FB9\u90FD\u8981\u5199\u7684\u5E93" },
+      { value: "push", label: "\u4EC5\u63A8\u9001", hint: "\u628A\u672C\u5730\u5185\u5BB9\u5B9A\u671F\u53D1\u5E03\u5230\u8FDC\u7AEF\uFF1B\u4E0D\u62C9\u53D6\u8FDC\u7AEF\u6539\u52A8" }
+    ];
+    this.direction = "pull";
+    for (const option of directionOptions) {
+      const row = this.resultEl.createDiv({ cls: "feishu-wiki-option-row" });
+      const radio = row.createEl("input", { type: "radio" });
+      radio.name = "feishu-add-direction";
+      radio.value = option.value;
+      radio.checked = this.direction === option.value;
+      radio.addEventListener("change", () => {
+        if (radio.checked)
+          this.direction = option.value;
+      });
+      const box = row.createDiv();
+      box.createEl("div", { text: option.label });
+      box.createEl("div", { cls: "setting-item-description", text: option.hint });
+    }
+    this.resultEl.createEl("div", {
+      cls: "setting-item-description",
+      text: "\u4E0D\u786E\u5B9A\u6743\u9650\u65F6\u9009\u300C\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09\u300D\u6700\u5B89\u5168\uFF1A\u5982\u679C\u4E4B\u540E\u53D1\u73B0\u6709\u7F16\u8F91\u6743\u9650\uFF0C\u968F\u65F6\u53EF\u4EE5\u5728\u8BBE\u7F6E\u91CC\u6539\u6210\u53CC\u5411\u534F\u4F5C\u3002"
+    });
+    new import_obsidian12.Setting(this.resultEl).addButton(
+      (button) => button.setButtonText("\u5B8C\u6210\u5E76\u5F00\u59CB\u9996\u6B21\u540C\u6B65\uFF08\u9884\u89C8\uFF09").setCta().onClick(() => void this.confirm())
+    ).addExtraButton((button) => button.setIcon("cross").setTooltip("\u53D6\u6D88").onClick(() => this.close()));
+  }
+  async resolveInput() {
+    if (this.busy)
+      return;
+    const parsed = parseWikiInput(this.urlInput?.value ?? "");
+    if (parsed.kind === "invalid") {
+      new import_obsidian12.Notice(parsed.reason, 5e3);
+      return;
+    }
+    this.busy = true;
+    try {
+      const client = this.deps.createClient();
+      if (parsed.kind === "node") {
+        const node = await getNodeByToken(client, parsed.token, "wiki");
+        const spaceId = ((node?.node_type === "shortcut" ? node?.origin_space_id : node?.space_id) ?? "").trim();
+        if (!spaceId) {
+          new import_obsidian12.Notice("\u89E3\u6790\u5931\u8D25\uFF1A\u5F53\u524D\u8D26\u53F7\u53EF\u80FD\u65E0\u6743\u8BBF\u95EE\u8BE5\u8282\u70B9\u3002\u8BF7\u5148\u5728\u98DE\u4E66\u91CC\u6253\u5F00\u4E00\u6B21\u8FD9\u4E2A\u9875\u9762\uFF0C\u518D\u56DE\u6765\u91CD\u8BD5\u3002", 8e3);
+          return;
+        }
+        const nodeToken = ((node?.node_type === "shortcut" ? node?.origin_node_token : node?.node_token) ?? "").trim();
+        const nodeTitle = (node?.title ?? "").trim();
+        let spaceName = "";
+        try {
+          const spaces = await listSpaces(client);
+          spaceName = spaces.find((item3) => item3.space_id === spaceId)?.name ?? "";
+        } catch {
+        }
+        this.resolved = {
+          spaceId,
+          nodeToken,
+          name: spaceName || nodeTitle || `\u7A7A\u95F4 ${spaceId}`,
+          nodeTitle,
+          hasChildren: node?.has_child === true,
+          spaceOnly: false
+        };
+      } else {
+        let spaceName = "";
+        try {
+          const spaces = await listSpaces(client);
+          spaceName = spaces.find((item3) => item3.space_id === parsed.spaceId)?.name ?? "";
+        } catch {
+        }
+        this.resolved = {
+          spaceId: parsed.spaceId,
+          nodeToken: "",
+          name: spaceName || `\u7A7A\u95F4 ${parsed.spaceId}`,
+          nodeTitle: "",
+          hasChildren: false,
+          spaceOnly: true
+        };
+      }
+      this.renderResult();
+    } catch (error) {
+      new import_obsidian12.Notice(`\u89E3\u6790\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`, 8e3);
+    } finally {
+      this.busy = false;
+    }
+  }
+  async confirm() {
+    if (!this.resolved) {
+      new import_obsidian12.Notice("\u8BF7\u5148\u89E3\u6790\u77E5\u8BC6\u5E93\u5730\u5740");
+      return;
+    }
+    const settings = this.deps.settings();
+    const cleanDir = sanitizeDirName(this.localFolder);
+    if (this.localFolder && cleanDir !== this.localFolder) {
+      this.localFolder = this.localFolder.split("/").map((segment) => sanitizeDirName(segment)).filter(Boolean).join("/");
+    }
+    const name = this.resolved.name;
+    const profileId = newProfileId();
+    createAndActivateProfile(settings, {
+      id: profileId,
+      name,
+      direction: this.direction,
+      conflictPolicy: this.direction === "pull" ? "remote-wins" : "keep-both",
+      target: {
+        spaceId: this.resolved.spaceId,
+        rootNodeToken: this.scopeChoice === "node" ? this.resolved.nodeToken : "",
+        rootPageTitle: "",
+        includeRootPage: this.scopeChoice === "node",
+        localFolder: this.localFolder,
+        syncMode: settings.syncMode,
+        folderMode: settings.folderMode,
+        flatSeparator: settings.flatSeparator,
+        excludePatterns: settings.excludePatterns,
+        attachmentFolder: settings.attachmentFolder,
+        attachmentLinkStyle: settings.attachmentLinkStyle,
+        docVerifyRemoteByContent: settings.docVerifyRemoteByContent,
+        autoSyncMinutes: settings.autoSyncMinutes,
+        restoreLocalDeleted: this.direction === "pull" ? true : settings.restoreLocalDeleted,
+        recreateRemoteIfDeleted: false,
+        propagateLocalDelete: false,
+        propagateRemoteDelete: false,
+        showPlanBeforeSync: true
+      }
+    });
+    await this.deps.onFinish?.({ profileId, direction: this.direction });
+    this.close();
+  }
+};
+
+// src/ui/switch-target-modal.ts
+var import_obsidian13 = require("obsidian");
+init_profileStore();
+var SwitchTargetModal = class extends import_obsidian13.FuzzySuggestModal {
+  constructor(app, deps) {
+    super(app);
+    this.deps = deps;
+    this.setPlaceholder("\u5207\u6362\u98DE\u4E66\u540C\u6B65\u76EE\u6807\uFF08\u65B0\u5EFA\u76EE\u6807\u9009\u300C\u2795 \u6DFB\u52A0\u77E5\u8BC6\u5E93\u2026\u300D\uFF09");
+  }
+  getItems() {
+    return this.deps.profiles;
+  }
+  getItemText(item3) {
+    const active = item3.id === this.deps.activeId ? "\uFF08\u5F53\u524D\uFF09" : "";
+    return `${item3.name}${active} \xB7 ${directionLabel(item3.direction)} \xB7 ${item3.target.localFolder || "vault \u6839\u76EE\u5F55"}`;
+  }
+  onChooseItem(item3) {
+    void this.deps.onSwitch(item3.id);
+  }
+  /** 空结果时给出添加入口。 */
+  onNoSuggestion() {
+    this.openAdd();
+  }
+  openAdd() {
+    this.close();
+    this.deps.onAdd();
+    new import_obsidian13.Notice("\u5728\u5411\u5BFC\u91CC\u7C98\u8D34\u77E5\u8BC6\u5E93\u94FE\u63A5\u5373\u53EF\u6DFB\u52A0\u65B0\u76EE\u6807");
+  }
+};
+
 // src/main.ts
+init_profileStore();
 var CHANGE_ACTIONS = /* @__PURE__ */ new Set(["push", "create-remote", "pull", "create-local", "link", "delete-remote", "delete-local"]);
 function setNoticeMessage(notice, message) {
   const candidate = notice;
   if (typeof candidate.setMessage === "function")
     candidate.setMessage(message);
 }
-var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
+var FeishuWikiSyncPlugin = class extends import_obsidian14.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -5359,6 +5940,8 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
   }
   async onload() {
     await this.loadSettings();
+    if (ensureProfilesMigrated(this.settings))
+      await this.saveSettings();
     this.logger = new Logger(
       () => this.app,
       () => this.settings.debugLog
@@ -5394,7 +5977,7 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
     });
     this.statusBar = this.addStatusBarItem();
     this.statusBar.addClass("mod-clickable");
-    this.registerDomEvent(this.statusBar, "click", () => void this.runSync("both"));
+    this.registerDomEvent(this.statusBar, "click", () => void this.runSync(this.settings.syncDirection ?? "both"));
     this.updateStatusBar();
     this.addSettingTab(new FeishuWikiSyncSettingTab(this.app, this));
     this.addCommand({ id: "preview-plan", name: "\u9884\u89C8\u540C\u6B65\u8BA1\u5212", callback: () => void this.runSync("both", { preview: true }) });
@@ -5406,7 +5989,17 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
       name: "\u5F3A\u5236\u91CD\u63A8\uFF08\u5FFD\u7565\u57FA\u7EBF\uFF0C\u5237\u65B0\u6240\u6709\u672C\u5730\u7B14\u8BB0\uFF09",
       callback: () => void this.runSync("push", { forcePush: true })
     });
-    this.addRibbonIcon("refresh-cw", "Feishu Wiki Sync\uFF1A\u53CC\u5411\u540C\u6B65", () => void this.runSync("both"));
+    this.addCommand({
+      id: "add-wiki",
+      name: "\u6DFB\u52A0\u77E5\u8BC6\u5E93\uFF08\u7C98\u8D34\u94FE\u63A5\uFF0C\u81EA\u52A8\u89E3\u6790\u7A7A\u95F4/\u76EE\u5F55/\u6863\u4F4D\uFF09",
+      callback: () => this.openAddWikiWizard()
+    });
+    this.addCommand({
+      id: "switch-target",
+      name: "\u5207\u6362\u540C\u6B65\u76EE\u6807",
+      callback: () => this.openTargetSwitcher()
+    });
+    this.addRibbonIcon("refresh-cw", "Feishu Wiki Sync\uFF1A\u6309\u5F53\u524D\u6863\u4F4D\u540C\u6B65", () => void this.runSync(this.settings.syncDirection ?? "both"));
     this.refreshAutoSync();
   }
   onunload() {
@@ -5446,6 +6039,7 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
     return this.syncInFlight || this.mdEngine?.isSyncing() || this.docEngine?.isSyncing();
   }
   async saveSettings() {
+    syncSettingsIntoActiveProfile(this.settings);
     await this.saveData(this.settings);
   }
   refreshAutoSync() {
@@ -5469,11 +6063,11 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
     const server = this.auth.startCallbackServer(state);
     const authorizeUrl = this.auth.buildAuthorizeUrl(state);
     openExternal(authorizeUrl);
-    new import_obsidian12.Notice("\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u8BF7\u5728\u98DE\u4E66\u91CC\u5B8C\u6210\u6388\u6743");
+    new import_obsidian14.Notice("\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u8BF7\u5728\u98DE\u4E66\u91CC\u5B8C\u6210\u6388\u6743");
     try {
       const code = await server.waitForCode();
       await this.auth.exchangeCode(code);
-      new import_obsidian12.Notice("\u98DE\u4E66\u6388\u6743\u6210\u529F");
+      new import_obsidian14.Notice("\u98DE\u4E66\u6388\u6743\u6210\u529F");
     } catch (error) {
       server.close();
       throw error;
@@ -5490,9 +6084,9 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
         async (codeOrUrl) => {
           try {
             await this.auth.exchangeCode(codeOrUrl);
-            new import_obsidian12.Notice("\u98DE\u4E66\u6388\u6743\u6210\u529F");
+            new import_obsidian14.Notice("\u98DE\u4E66\u6388\u6743\u6210\u529F");
           } catch (error) {
-            new import_obsidian12.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${describeError(error)}`, 1e4);
+            new import_obsidian14.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${describeError(error)}`, 1e4);
           }
           resolve();
         },
@@ -5503,19 +6097,47 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
   async revokeAuthorization() {
     this.settings.userTokens = void 0;
     await this.saveSettings();
-    new import_obsidian12.Notice("\u5DF2\u6E05\u9664\u672C\u5730\u4FDD\u5B58\u7684\u98DE\u4E66\u6388\u6743");
+    new import_obsidian14.Notice("\u5DF2\u6E05\u9664\u672C\u5730\u4FDD\u5B58\u7684\u98DE\u4E66\u6388\u6743");
   }
-  async runSync(mode, options = {}) {
+  async runSync(requestedMode, options = {}) {
     if (this.engine.isSyncing() || this.syncInFlight) {
-      new import_obsidian12.Notice("\u98DE\u4E66\u540C\u6B65\uFF1A\u5DF2\u6709\u4EFB\u52A1\u5728\u6267\u884C\u4E2D");
+      new import_obsidian14.Notice("\u98DE\u4E66\u540C\u6B65\uFF1A\u5DF2\u6709\u4EFB\u52A1\u5728\u6267\u884C\u4E2D");
       return;
     }
     if (!this.settings.appId || !this.settings.appSecret) {
-      new import_obsidian12.Notice("\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u91CC\u586B\u5199\u98DE\u4E66\u5E94\u7528\u7684 App ID \u4E0E App Secret");
+      new import_obsidian14.Notice("\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u91CC\u586B\u5199\u98DE\u4E66\u5E94\u7528\u7684 App ID \u4E0E App Secret");
       return;
     }
+    let mode = requestedMode;
+    const direction = this.settings.syncDirection ?? "both";
+    const quiet = options.quiet === true;
+    if (direction === "pull") {
+      if (options.forcePush) {
+        new import_obsidian14.Notice("\u5F53\u524D\u76EE\u6807\u4E3A\u300C\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09\u300D\u6863\u4F4D\uFF0C\u5F3A\u5236\u91CD\u63A8\u4E0D\u53EF\u7528\uFF1B\u5982\u786E\u9700\u63A8\u9001\u8BF7\u5148\u5728\u8BBE\u7F6E\u91CC\u5207\u56DE\u53CC\u5411\u534F\u4F5C");
+        return;
+      }
+      if (mode === "push") {
+        new import_obsidian14.Notice("\u5F53\u524D\u76EE\u6807\u4E3A\u300C\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09\u300D\u6863\u4F4D\uFF0C\u5DF2\u8DF3\u8FC7\u63A8\u9001");
+        return;
+      }
+      if (mode === "both") {
+        mode = "pull";
+        if (!quiet)
+          new import_obsidian14.Notice("\u5F53\u524D\u76EE\u6807\u4E3A\u300C\u4EC5\u62C9\u53D6\uFF08\u955C\u50CF\uFF09\u300D\u6863\u4F4D\uFF0C\u5DF2\u6309\u4EC5\u62C9\u53D6\u6267\u884C", 4e3);
+      }
+    } else if (direction === "push") {
+      if (mode === "pull") {
+        new import_obsidian14.Notice("\u5F53\u524D\u76EE\u6807\u4E3A\u300C\u4EC5\u63A8\u9001\u300D\u6863\u4F4D\uFF0C\u5DF2\u8DF3\u8FC7\u62C9\u53D6");
+        return;
+      }
+      if (mode === "both") {
+        mode = "push";
+        if (!quiet)
+          new import_obsidian14.Notice("\u5F53\u524D\u76EE\u6807\u4E3A\u300C\u4EC5\u63A8\u9001\u300D\u6863\u4F4D\uFF0C\u5DF2\u6309\u4EC5\u63A8\u9001\u6267\u884C", 4e3);
+      }
+    }
     if (options.forcePush && this.settings.syncMode !== "doc") {
-      new import_obsidian12.Notice("\u5F3A\u5236\u91CD\u63A8\u4EC5\u7528\u4E8E\u6587\u6863\u6A21\u5F0F\uFF1B\u6587\u4EF6\u955C\u50CF\u6A21\u5F0F\u8BF7\u4F7F\u7528\u666E\u901A\u540C\u6B65");
+      new import_obsidian14.Notice("\u5F3A\u5236\u91CD\u63A8\u4EC5\u7528\u4E8E\u6587\u6863\u6A21\u5F0F\uFF1B\u6587\u4EF6\u955C\u50CF\u6A21\u5F0F\u8BF7\u4F7F\u7528\u666E\u901A\u540C\u6B65");
       return;
     }
     this.syncInFlight = true;
@@ -5523,7 +6145,7 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
     const label = this.settings.syncMode === "doc" ? "\u98DE\u4E66\u6587\u6863\u540C\u6B65" : "\u98DE\u4E66\u6587\u4EF6\u540C\u6B65";
     const wantPreview = !options.quiet && (this.settings.propagateLocalDelete || this.settings.propagateRemoteDelete || options.forcePush === true || (options.preview ?? this.settings.showPlanBeforeSync));
     const forcePush = options.forcePush === true;
-    const notice = new import_obsidian12.Notice(`${label}\uFF1A\u51C6\u5907\u4E2D\u2026`, 0);
+    const notice = new import_obsidian14.Notice(`${label}\uFF1A\u51C6\u5907\u4E2D\u2026`, 0);
     let running;
     const progress = (message) => setNoticeMessage(notice, `${label}\uFF1A${message}`);
     try {
@@ -5533,7 +6155,7 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
         const decision = await new Promise((resolve) => new PlanModal(this.app, preview.plan, resolve).open());
         if (decision === "cancel")
           return;
-        running = new import_obsidian12.Notice(`${label}\uFF1A\u6267\u884C\u4E2D\u2026`, 0);
+        running = new import_obsidian14.Notice(`${label}\uFF1A\u6267\u884C\u4E2D\u2026`, 0);
         const result2 = await engine.run({
           mode,
           preApprovedPlan: preview.plan,
@@ -5552,14 +6174,14 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
       const pendingDeletes = result.report.some((entry) => entry.action === "local-deleted" || entry.action === "remote-deleted");
       if (options.quiet && failures === 0 && conflicts === 0 && !pendingDeletes && !result.plan.warnings?.length) {
         if (changes > 0)
-          new import_obsidian12.Notice(`${label}\u5B8C\u6210\uFF1A${changes} \u9879\u53D8\u66F4`);
+          new import_obsidian14.Notice(`${label}\u5B8C\u6210\uFF1A${changes} \u9879\u53D8\u66F4`);
       } else {
         new ReportModal(this.app, result.plan, result.report, result.executed).open();
       }
     } catch (error) {
       notice.hide();
       this.logger.error(`\u540C\u6B65\u5931\u8D25\uFF1A${describeError(error)}`);
-      new import_obsidian12.Notice(`${label}\u5931\u8D25\uFF1A${describeError(error)}`, 12e3);
+      new import_obsidian14.Notice(`${label}\u5931\u8D25\uFF1A${describeError(error)}`, 12e3);
     } finally {
       running?.hide();
       notice.hide();
@@ -5575,7 +6197,51 @@ var FeishuWikiSyncPlugin = class extends import_obsidian12.Plugin {
     const docMode = this.settings.syncMode === "doc";
     const count = Object.keys(docMode ? this.settings.state.docRecords : this.settings.state.records).length;
     const stamp = last ? new Date(last).toLocaleString(void 0, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "\u672A\u540C\u6B65";
-    this.statusBar.setText(`\u98DE\u4E66${docMode ? "\u6587\u6863" : ""} ${stamp} \xB7 ${count} \u7BC7`);
-    this.statusBar.setAttr("aria-label", docMode ? "\u70B9\u51FB\u6267\u884C\u6587\u6863\u6A21\u5F0F\u53CC\u5411\u540C\u6B65" : "\u70B9\u51FB\u6267\u884C\u98DE\u4E66\u53CC\u5411\u540C\u6B65");
+    const direction = this.settings.syncDirection ?? "both";
+    const profileName = this.settings.localFolder ? this.settings.localFolder.split("/").filter(Boolean).pop() : "";
+    const suffix = direction === "pull" ? " \u2193" : direction === "push" ? " \u2191" : "";
+    const nameSuffix = profileName ? ` \xB7 ${profileName}` : "";
+    this.statusBar.setText(`\u98DE\u4E66${docMode ? "\u6587\u6863" : ""}${suffix} ${stamp} \xB7 ${count} \u7BC7${nameSuffix}`);
+    this.statusBar.setAttr("aria-label", `\u70B9\u51FB\u6309\u300C${directionLabel(direction)}\u300D\u6863\u4F4D\u6267\u884C\u540C\u6B65\uFF1B\u5207\u6362\u76EE\u6807\u7528\u547D\u4EE4\u9762\u677F`);
+  }
+  /** 二开：添加知识库向导（粘贴链接 → 解析空间/范围/目录/档位 → 建目标并可选首次同步）。 */
+  openAddWikiWizard() {
+    if (!this.settings.appId || !this.settings.appSecret) {
+      new import_obsidian14.Notice("\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u91CC\u586B\u5199\u98DE\u4E66\u5E94\u7528\u7684 App ID \u4E0E App Secret");
+      return;
+    }
+    new AddWikiModal(this.app, {
+      settings: () => this.settings,
+      createClient: () => this.engine.createClient(),
+      onFinish: async (result) => {
+        this.updateStatusBar();
+        this.refreshAutoSync();
+        await this.runSync(result.direction, { preview: true });
+      }
+    }).open();
+  }
+  /** 二开：切换同步目标。 */
+  openTargetSwitcher() {
+    const profiles = this.settings.profiles ?? [];
+    if (profiles.length === 0) {
+      this.openAddWikiWizard();
+      return;
+    }
+    new SwitchTargetModal(this.app, {
+      profiles,
+      activeId: this.settings.activeProfileId ?? "",
+      onSwitch: async (id) => {
+        const changed = activateProfile(this.settings, id);
+        if (changed) {
+          await this.saveSettings();
+          this.updateStatusBar();
+          this.refreshAutoSync();
+          const active = profiles.find((item3) => item3.id === id);
+          if (active)
+            new import_obsidian14.Notice(`\u5DF2\u5207\u6362\u5230\u76EE\u6807\uFF1A${active.name}\uFF08${directionLabel(active.direction)}\uFF09`);
+        }
+      },
+      onAdd: () => this.openAddWikiWizard()
+    }).open();
   }
 };

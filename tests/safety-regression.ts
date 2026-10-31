@@ -7,7 +7,9 @@ import { listNodes, walkWikiTree } from "../src/feishu/wiki";
 import { uploadMarkdownToWiki } from "../src/feishu/files";
 import { PathFilter, assertSafeVaultPath } from "../src/sync/scanner";
 import { assertPlanCurrent, isEditorDirty, planFingerprint, prepareTarget, validateLocalPaths, validateSettings } from "../src/sync/guards";
+import { activateProfile, ensureProfilesMigrated, parseWikiInput, suggestLocalFolder, syncSettingsIntoActiveProfile } from "../src/sync/profileStore";
 import { DEFAULT_SETTINGS, emptyState, normalizeLocalFolder } from "../src/sync/types";
+import type { SyncTargetProfile } from "../src/sync/types";
 import { Logger } from "../src/log";
 
 const logger = { debug() {}, info() {}, warn() {}, error() {} } as never;
@@ -177,4 +179,54 @@ test("changing local sync folder invalidates preview and resets mappings", () =>
   assert.ok(prepareTarget(settings, "space", "root", "doc"));
   assert.deepEqual(settings.state.folders, {});
   assert.equal(settings.state.target?.localFolder, "飞书/资料");
+});
+
+test("multi-target profiles: migrate, switch, stash flat edits, parse wiki links", () => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    state: emptyState(),
+    spaceId: "s1",
+    localFolder: "飞书/A",
+    syncDirection: "both" as const,
+    conflictPolicy: "keep-both" as const,
+  };
+  assert.ok(ensureProfilesMigrated(settings));
+  assert.equal(settings.profiles?.length, 1);
+  assert.equal(settings.activeProfileId, "default");
+  assert.equal(settings.profiles?.[0]?.target.localFolder, "飞书/A");
+  assert.ok(!ensureProfilesMigrated(settings), "迁移必须幂等");
+
+  settings.localFolder = "飞书/A2";
+  syncSettingsIntoActiveProfile(settings);
+  assert.equal(settings.profiles?.[0]?.target.localFolder, "飞书/A2", "平铺编辑收回激活目标");
+
+  const p2: SyncTargetProfile = {
+    id: "p2",
+    name: "B 库",
+    direction: "pull",
+    conflictPolicy: "remote-wins",
+    target: { ...settings.profiles![0].target, spaceId: "s2", localFolder: "飞书/B" },
+    state: emptyState(),
+  };
+  settings.profiles!.push(p2);
+  assert.ok(activateProfile(settings, "p2"));
+  assert.equal(settings.spaceId, "s2");
+  assert.equal(settings.localFolder, "飞书/B");
+  assert.equal(settings.syncDirection, "pull");
+  assert.equal(settings.state, p2.state, "切换后 state 指向新目标的状态");
+
+  settings.localFolder = "飞书/B2";
+  syncSettingsIntoActiveProfile(settings);
+  assert.ok(activateProfile(settings, "default"));
+  assert.equal(settings.localFolder, "飞书/A2", "切回 default 恢复原目录");
+  assert.equal(settings.syncDirection, "both");
+  assert.ok(activateProfile(settings, "p2"));
+  assert.equal(settings.localFolder, "飞书/B2", "p2 的编辑在切换往返后保留");
+
+  assert.deepEqual(parseWikiInput("https://x.feishu.cn/wiki/space/123456"), { kind: "space", spaceId: "123456" });
+  assert.deepEqual(parseWikiInput("https://x.feishu.cn/wiki/REN7abcXYZ12?v=1"), { kind: "node", token: "REN7abcXYZ12" });
+  assert.equal(parseWikiInput("随 手 写").kind, "invalid");
+  assert.equal(parseWikiInput("").kind, "invalid");
+  assert.equal(suggestLocalFolder("飞书同步/RAG", "RAG 智能体开发"), "飞书同步/RAG 智能体开发");
+  assert.equal(suggestLocalFolder("", "a/b:c"), "飞书同步/abc");
 });

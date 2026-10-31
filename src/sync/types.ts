@@ -36,6 +36,8 @@ export interface PlanItem {
   documentId?: string;
   /** Rule-only refresh: recheck the remote content before overwriting a previewed plan. */
   rulesRefresh?: boolean;
+  /** 二开：镜像档远端覆盖本地时，覆盖前把本地旧版另存副本 */
+  backupLocal?: boolean;
 }
 
 export interface SyncPlan {
@@ -168,6 +170,42 @@ export function emptyState(): SyncState {
 /** 笔记同步形态：md 为原生 Markdown 文件镜像，doc 为飞书新版文档 */
 export type SyncModeSetting = "md" | "doc";
 
+/** 二开：同步档位（方向）。pull = 仅拉取镜像；both = 双向协作；push = 仅推送 */
+export type SyncDirectionProfile = "pull" | "both" | "push";
+
+/** 二开：冲突策略。keep-both = 保留双方（上游行为）；remote-wins = 远端覆盖本地，本地旧版另存副本 */
+export type ConflictPolicy = "keep-both" | "remote-wins";
+
+/** 二开：一个同步目标（知识库 × 本地目录 × 方向档位）的完整快照 */
+export interface SyncTargetProfile {
+  id: string;
+  name: string;
+  direction: SyncDirectionProfile;
+  conflictPolicy: ConflictPolicy;
+  target: {
+    spaceId: string;
+    rootNodeToken: string;
+    rootPageTitle: string;
+    includeRootPage: boolean;
+    localFolder: string;
+    syncMode: "md" | "doc";
+    folderMode: "nodes" | "flat";
+    flatSeparator: string;
+    excludePatterns: string;
+    attachmentFolder: string;
+    attachmentLinkStyle: "shortest" | "path";
+    docVerifyRemoteByContent: boolean;
+    autoSyncMinutes: number;
+    restoreLocalDeleted: boolean;
+    recreateRemoteIfDeleted: boolean;
+    propagateLocalDelete: boolean;
+    propagateRemoteDelete: boolean;
+    showPlanBeforeSync: boolean;
+  };
+  /** 该目标上次激活时的同步状态；settings.state 始终是当前激活目标的活状态 */
+  state?: SyncState;
+}
+
 export interface PluginSettings {
   authMode: AuthMode;
   appId: string;
@@ -203,6 +241,14 @@ export interface PluginSettings {
   debugLog: boolean;
   userTokens?: UserTokens;
   state: SyncState;
+  /** 二开：当前激活目标的同步档位（方向）。缺省 both = 上游行为 */
+  syncDirection?: SyncDirectionProfile;
+  /** 二开：冲突策略。缺省 keep-both = 上游行为 */
+  conflictPolicy?: ConflictPolicy;
+  /** 二开：全部同步目标；缺省（旧配置）由 profileStore 迁移生成单一 default 目标 */
+  profiles?: SyncTargetProfile[];
+  /** 二开：当前激活的目标 id */
+  activeProfileId?: string;
 }
 
 /**
@@ -247,6 +293,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   autoSyncMinutes: 0,
   debugLog: false,
   state: emptyState(),
+  syncDirection: "both",
+  conflictPolicy: "keep-both",
 };
 
 export interface RemoteNote {

@@ -2,7 +2,7 @@ import { assertSafeVaultPath } from "./scanner";
 import type { RulesFile } from "../convert/rules";
 import { applyRules, normalizeImagesForCompare, publishRulesFingerprint, pullRulesFingerprint, ruleEnabled, sourceFormatWarnings } from "../convert/rules";
 import type { WikiTreeEntry } from "../feishu/wiki";
-import type { LocalNote, PlanItem, SyncPlan, SyncState } from "./types";
+import type { ConflictPolicy, LocalNote, PlanItem, SyncPlan, SyncState } from "./types";
 import { basenameOf, dirnameOf, joinPath, prefixLocalPath, stripLocalFolder, summarize } from "./types";
 
 export interface DocRemoteNote {
@@ -302,6 +302,8 @@ export interface DocPlannerInput {
   verifyRemoteByContent: boolean;
   /** 强制重推：忽略基线，把本地有内容的笔记都判成 push */
   forcePush: boolean;
+  /** 二开：冲突策略。remote-wins = 镜像档，冲突自动以远端覆盖本地（本地旧版另存副本） */
+  conflictPolicy?: ConflictPolicy;
 }
 
 function item(relPath: string, action: PlanItem["action"], reason?: string, extra: Partial<PlanItem> = {}): PlanItem {
@@ -462,6 +464,10 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
         // 只有图片引用不同——按素材槽位归一后再比较，避免首次对接误报冲突。
         if (pulled === localText || normalizeImagesForCompare(pulled) === normalizeImagesForCompare(localText)) {
           items.push(item(relPath, "link", "两边内容一致，只建立映射", extra));
+        } else if (input.conflictPolicy === "remote-wins") {
+          items.push(
+            item(relPath, "pull", "镜像档：远端覆盖本地（本地旧版已另存副本）", { ...extra, backupLocal: true }),
+          );
         } else {
           items.push(conflictItem(relPath, state, "首次对接：同名文档两边内容不同，已保留双方", extra, localHash, hash));
         }
@@ -497,16 +503,22 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
       const hash = remoteState.hash ?? record.baseRemoteHash;
       const stamp = remoteState.metaTime ? { remoteModifiedTime: remoteState.metaTime } : {};
       if (remoteState.changed) {
-        items.push(
-          conflictItem(
-            relPath,
-            state,
-            "本地已删除、远端被修改：为避免丢内容，未自动处理",
-            { ...remoteFields, localHash: "", remoteHash: hash },
-            "",
-            hash,
-          ),
-        );
+        if (input.conflictPolicy === "remote-wins") {
+          items.push(
+            item(relPath, "create-local", "镜像档：本地已删除，远端为唯一事实源，恢复最新内容", { ...remoteFields, remoteHash: hash }),
+          );
+        } else {
+          items.push(
+            conflictItem(
+              relPath,
+              state,
+              "本地已删除、远端被修改：为避免丢内容，未自动处理",
+              { ...remoteFields, localHash: "", remoteHash: hash },
+              "",
+              hash,
+            ),
+          );
+        }
       } else if (input.propagateLocalDelete) {
         items.push(
           item(relPath, "delete-remote", "本地已删除，按设置删除远端文档（进飞书回收站，可恢复）", {
@@ -575,8 +587,12 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
       pulledContent(input, relPath, remoteNote, localNote),
       readLocalCached(input, relPath),
     ]);
-    if (pulled === localText) {
+    if (pulled === localText || normalizeImagesForCompare(pulled) === normalizeImagesForCompare(localText)) {
       items.push(item(relPath, "link", "两边内容一致，只更新基线", extra));
+      continue;
+    }
+    if (input.conflictPolicy === "remote-wins") {
+      items.push(item(relPath, "pull", "镜像档：两边都改过，远端覆盖本地（本地旧版已另存副本）", { ...extra, backupLocal: true }));
       continue;
     }
     items.push(conflictItem(relPath, state, "两边都改过且内容不同，已保留双方", extra, localHash, hash ?? localHash));
