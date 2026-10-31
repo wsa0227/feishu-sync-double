@@ -492,6 +492,46 @@ const unescapeImageMarkup: BuiltInRule = {
       .replace(/!\\\[\\\]\(/g, "![]("),
 };
 
+/** 二开：飞书高亮块（callout）→ Obsidian 标准 callout 块。无标题形态，正文全部保留为引用行。 */
+const feishuCalloutConvert: BuiltInRule = {
+  id: "feishu-callout-convert",
+  description:
+    "下行：把飞书高亮块 <callout emoji=\"…\">…</callout> 转成 Obsidian 标准 callout（> [!info] emoji，正文逐行加引用前缀）。" +
+    "关闭时高亮块以原始标签保留。单篇云文档里常见。",
+  defaultEnabled: true,
+  apply: (input) =>
+    input.replace(/<callout\b([^>]*)>([\s\S]*?)<\/callout>/g, (_match, attrs: string, inner: string) => {
+      const emoji = /emoji="([^"]*)"/.exec(attrs)?.[1]?.trim() ?? "💡";
+      const lines = inner.replace(/^\n+/, "").replace(/\s+$/, "").split("\n");
+      if (lines.length === 1 && lines[0]?.trim() === "") return "";
+      const quoted = lines.map((line) => `> ${line.trimEnd()}`).join("\n");
+      return `> [!info] ${emoji}\n${quoted}`;
+    }),
+};
+
+/** 二开：飞书文档引用块（cite）→ 指向原文的引用行。 */
+const feishuCiteConvert: BuiltInRule = {
+  id: "feishu-cite-convert",
+  description:
+    "下行：把飞书文档引用块 <cite doc-id=\"…\">…</cite> 转成指向原文的引用行（https://feishu.cn/docx/<id>）。" +
+    "关闭时引用块以原始标签保留。单篇云文档里常见。",
+  defaultEnabled: true,
+  apply: (input) => {
+    const paired = input.replace(
+      /<cite\b[^>]*doc-id="([^"]*)"[^>]*>([\s\S]*?)<\/cite>/g,
+      (_match, docId: string, inner: string) => {
+        const label = inner.trim();
+        return `> [!quote] 飞书引用文档：${label ? `${label} · ` : ""}[打开原文](https://feishu.cn/docx/${docId})`;
+      },
+    );
+    // 自闭合或未配对的 <cite doc-id="…"/>
+    return paired.replace(
+      /<cite\b[^>]*doc-id="([^"]*)"[^>]*\/?>/g,
+      (_match, docId: string) => `> [!quote] 飞书引用文档：[打开原文](https://feishu.cn/docx/${docId})`,
+    );
+  },
+};
+
 const imageDownload: BuiltInRule = {
   id: "image-download",
   description:
@@ -525,7 +565,7 @@ export const BUILT_IN_RULES: Record<RuleDirection, BuiltInRule[]> = {
     footnoteDowngrade,
     imageUpload,
   ],
-  toObsidian: [unescapeImageMarkup, dropTitleHeading, bookmarkToLink, restoreNativeMath, mathEscapeHash, mathTrimInlineSpaces, imageDownload, restoreImageRef],
+  toObsidian: [feishuCalloutConvert, feishuCiteConvert, unescapeImageMarkup, dropTitleHeading, bookmarkToLink, restoreNativeMath, mathEscapeHash, mathTrimInlineSpaces, imageDownload, restoreImageRef],
 };
 
 function entryOf(rule: BuiltInRule): RuleEntry {

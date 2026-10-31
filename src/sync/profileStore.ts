@@ -84,6 +84,7 @@ export function ensureProfilesMigrated(settings: PluginSettings): boolean {
     conflictPolicy: settings.conflictPolicy ?? "keep-both",
     target: snapshotTarget(settings),
     state: settings.state,
+    docSource: settings.docSource,
   };
   const merged = existing.some((item) => item.id === "default")
     ? existing.map((item) => (item.id === "default" ? profile : item))
@@ -107,6 +108,7 @@ export function syncSettingsIntoActiveProfile(settings: PluginSettings): void {
   profile.state = settings.state;
   profile.direction = settings.syncDirection ?? profile.direction;
   profile.conflictPolicy = settings.conflictPolicy ?? profile.conflictPolicy;
+  profile.docSource = settings.docSource;
 }
 
 /** 切换激活目标：当前平铺字段与状态先收回旧目标，再把新目标快照铺开。 */
@@ -121,6 +123,7 @@ export function activateProfile(settings: PluginSettings, profileId: string): bo
   settings.activeProfileId = next.id;
   settings.syncDirection = next.direction;
   settings.conflictPolicy = next.conflictPolicy;
+  settings.docSource = next.docSource;
   return true;
 }
 
@@ -136,6 +139,7 @@ export function createAndActivateProfile(
   settings.state = created.state as SyncState;
   settings.syncDirection = created.direction;
   settings.conflictPolicy = created.conflictPolicy;
+  settings.docSource = created.docSource;
   return created;
 }
 
@@ -159,7 +163,8 @@ export function findFolderConflict(settings: PluginSettings, folder: string, exc
   return undefined;
 }
 
-/** 删除一个目标；删的是激活目标时切到剩余的第一个（没有则重建空的 default）。 */export function deleteProfile(settings: PluginSettings, profileId: string): boolean {
+/** 删除一个目标；删的是激活目标时切到剩余的第一个（没有则重建空的 default）。 */
+export function deleteProfile(settings: PluginSettings, profileId: string): boolean {
   const profiles = settings.profiles ?? [];
   const remaining = profiles.filter((item) => item.id !== profileId);
   if (remaining.length === profiles.length) return false;
@@ -172,6 +177,7 @@ export function findFolderConflict(settings: PluginSettings, folder: string, exc
     settings.activeProfileId = "default";
     settings.syncDirection = "both";
     settings.conflictPolicy = "keep-both";
+    settings.docSource = undefined;
     settings.state = emptyState();
     applyTarget(settings, { ...snapshotTarget(settings), spaceId: "", rootNodeToken: "", localFolder: "" });
   }
@@ -183,18 +189,22 @@ export function findFolderConflict(settings: PluginSettings, folder: string, exc
 export type ParsedWikiInput =
   | { kind: "space"; spaceId: string }
   | { kind: "node"; token: string }
+  /** 二开：/docx/ 链接——不在任何知识库里的独立云空间文档 */
+  | { kind: "docx"; documentId: string }
   | { kind: "invalid"; reason: string };
 
-/** 解析用户粘贴的知识库地址：支持 /wiki/space/<id>、/wiki/<node>、裸节点令牌。 */
+/** 解析用户粘贴的知识库地址：支持 /wiki/space/<id>、/wiki/<node>、/docx/<文档id>、裸节点令牌。 */
 export function parseWikiInput(raw: string): ParsedWikiInput {
   const value = raw.trim();
   if (!value) return { kind: "invalid", reason: "请先粘贴知识库链接或节点令牌" };
-  if (/^https?:\/\//i.test(value) || value.includes("/wiki/")) {
+  if (/^https?:\/\//i.test(value) || value.includes("/wiki/") || value.includes("/docx/")) {
+    const docxMatch = /\/docx\/([A-Za-z0-9]+)/.exec(value);
+    if (docxMatch) return { kind: "docx", documentId: docxMatch[1] };
     const spaceMatch = /\/wiki\/space\/([0-9]+)/.exec(value);
     if (spaceMatch) return { kind: "space", spaceId: spaceMatch[1] };
     const nodeMatch = /\/wiki\/([A-Za-z0-9_-]+)/.exec(value);
     if (nodeMatch && nodeMatch[1] !== "space") return { kind: "node", token: nodeMatch[1] };
-    return { kind: "invalid", reason: "无法从链接里识别节点或空间，请确认复制的是 /wiki/ 页面链接" };
+    return { kind: "invalid", reason: "无法从链接里识别节点或空间，请确认复制的是 /wiki/ 页面或 /docx/ 文档链接" };
   }
   if (/\s/.test(value) || value.length < 8) return { kind: "invalid", reason: "内容不像节点令牌，请粘贴 /wiki/ 页面链接" };
   return { kind: "node", token: value };

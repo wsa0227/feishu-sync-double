@@ -342,6 +342,20 @@ class FakeFeishu {
     document.modifyTime = this.tickDocTime();
   }
 
+  /** 二开场景：预置一篇不在任何知识库里的独立云文档（/docx/ 单篇同步用） */
+  seedStandaloneDoc(documentId: string, title: string, content: string): void {
+    this.documents.set(documentId, {
+      documentId,
+      title,
+      content,
+      revision: 1,
+      modifyTime: this.tickDocTime(),
+      url: `https://example.feishu.cn/docx/${documentId}`,
+      blocks: this.placeholderBlocks(content),
+      remoteImages: [],
+    });
+  }
+
   /** 只改内容、不动「最后修改时间」：用来复现"同一秒内的改动被时间戳快路径漏判"这一极端情况 */
   editDocContentWithoutTimeBump(documentId: string, content: string): void {
     const document = this.documents.get(documentId);
@@ -2623,7 +2637,7 @@ async function main(): Promise<void> {
       "source-format-diagnostics|image-ref-normalize|tab-indent-to-spaces|math-escape-hash|math-trim-inline-spaces|inline-formula-to-block|block-formula-own-paragraph|list-exit-after-hardbreak|native-math|footnote-downgrade|image-upload",
       "默认上行规则",
     );
-    eq(rules.toObsidian.map((rule) => rule.id).join("|"), "unescape-image-markup|drop-title-heading|bookmark-to-link|restore-native-math|math-escape-hash|math-trim-inline-spaces|image-download|restore-image-ref", "默认下行规则");
+    eq(rules.toObsidian.map((rule) => rule.id).join("|"), "feishu-callout-convert|feishu-cite-convert|unescape-image-markup|drop-title-heading|bookmark-to-link|restore-native-math|math-escape-hash|math-trim-inline-spaces|image-download|restore-image-ref", "默认下行规则");
     ok(rules.toFeishu.every((rule) => Boolean(rule.description)), "每条规则都要有 description");
     for (const rule of rules.toFeishu) {
       if (rule.id === "image-ref-normalize") rule.enabled = false;
@@ -3786,6 +3800,52 @@ async function main(): Promise<void> {
       return "本地编辑不会被旧 link 计划吞掉";
     });
   }
+
+  await scenario("二开：单篇云文档（/docx/，不在知识库）仅拉取与更新跟进", async () => {
+    const root = path.join(TMP_ROOT, "single-doc");
+    writeDocVault(root, {});
+    fs.mkdirSync(root, { recursive: true });
+    const fake = new FakeFeishu();
+    __setRequestUrlHandler(fake.handler);
+    const DOC_ID = "doxcnSingleDoc01";
+    fake.seedStandaloneDoc(
+      DOC_ID,
+      "姚金刚提示词合集",
+      "<title>姚金刚提示词合集</title>\n正文开始。\n\n<callout emoji=\"™️\">持续更新</callout>\n\n<cite doc-id=\"abc123\">另一篇</cite>\n",
+    );
+    const h = createDocHarness(fake, root, {
+      spaceId: "",
+      rootNodeToken: "",
+      docSource: { documentId: DOC_ID },
+      localFolder: "飞书文档",
+      syncMode: "doc",
+      syncDirection: "pull",
+      conflictPolicy: "remote-wins",
+    });
+
+    // 首轮：拉取新建 + callout/cite 转换
+    const round1 = await runDocRound(h, "单篇首轮", "pull");
+    eq(round1.result.plan.counts["create-local"], 1, "首轮应拉取新建");
+    eq(round1.delta.nodeList, 0, "单篇模式不遍历知识库树");
+    const fileRel = "飞书文档/姚金刚提示词合集.md";
+    ok(fs.existsSync(path.join(root, fileRel)), `单篇文档落地本地：${fileRel}`);
+    const text = readVaultFile(fileRel, root);
+    ok(text.includes("> [!info] ™️"), "callout 转成标准 callout 块");
+    ok(text.includes("> 持续更新"), "callout 正文保留为引用行");
+    ok(text.includes("[打开原文](https://feishu.cn/docx/abc123)"), "cite 转成引用行");
+    ok(!text.includes("<callout") && !text.includes("<cite"), "原始标签不残留");
+
+    // 无变化轮：skip
+    const round2 = await runDocRound(h, "单篇无变化轮", "pull");
+    eq(round2.result.plan.counts.skip, 1, "无变化轮应跳过");
+
+    // 作者更新：pull 覆盖
+    fake.setDocContent(DOC_ID, "<title>姚金刚提示词合集</title>\n正文第二版。\n");
+    const round3 = await runDocRound(h, "单篇远端更新轮", "pull");
+    eq(round3.result.plan.counts.pull, 1, "远端更新应拉取覆盖");
+    ok(readVaultFile(fileRel, root).includes("正文第二版"), "本地更新到第二版");
+    return `首轮 create-local=1（零树遍历）；callout/cite 已转换；无变化轮 skip=1；更新轮 pull=1`;
+  });
 
   for (const mode of ["md", "doc"] as const) {
     await scenario(`删除保护（${mode}）：远端在确认前恢复时保留本地`, async () => {

@@ -271,7 +271,8 @@ function ensureProfilesMigrated(settings) {
     direction: settings.syncDirection ?? "both",
     conflictPolicy: settings.conflictPolicy ?? "keep-both",
     target: snapshotTarget(settings),
-    state: settings.state
+    state: settings.state,
+    docSource: settings.docSource
   };
   const merged = existing.some((item3) => item3.id === "default") ? existing.map((item3) => item3.id === "default" ? profile : item3) : [profile, ...existing];
   settings.profiles = merged;
@@ -291,6 +292,7 @@ function syncSettingsIntoActiveProfile(settings) {
   profile.state = settings.state;
   profile.direction = settings.syncDirection ?? profile.direction;
   profile.conflictPolicy = settings.conflictPolicy ?? profile.conflictPolicy;
+  profile.docSource = settings.docSource;
 }
 function activateProfile(settings, profileId) {
   const profiles = settings.profiles ?? [];
@@ -305,6 +307,7 @@ function activateProfile(settings, profileId) {
   settings.activeProfileId = next.id;
   settings.syncDirection = next.direction;
   settings.conflictPolicy = next.conflictPolicy;
+  settings.docSource = next.docSource;
   return true;
 }
 function createAndActivateProfile(settings, profile) {
@@ -315,6 +318,7 @@ function createAndActivateProfile(settings, profile) {
   settings.state = created.state;
   settings.syncDirection = created.direction;
   settings.conflictPolicy = created.conflictPolicy;
+  settings.docSource = created.docSource;
   return created;
 }
 function findFolderConflict(settings, folder, excludeProfileId) {
@@ -348,6 +352,7 @@ function deleteProfile(settings, profileId) {
     settings.activeProfileId = "default";
     settings.syncDirection = "both";
     settings.conflictPolicy = "keep-both";
+    settings.docSource = void 0;
     settings.state = emptyState();
     applyTarget(settings, { ...snapshotTarget(settings), spaceId: "", rootNodeToken: "", localFolder: "" });
   }
@@ -357,14 +362,17 @@ function parseWikiInput(raw) {
   const value = raw.trim();
   if (!value)
     return { kind: "invalid", reason: "\u8BF7\u5148\u7C98\u8D34\u77E5\u8BC6\u5E93\u94FE\u63A5\u6216\u8282\u70B9\u4EE4\u724C" };
-  if (/^https?:\/\//i.test(value) || value.includes("/wiki/")) {
+  if (/^https?:\/\//i.test(value) || value.includes("/wiki/") || value.includes("/docx/")) {
+    const docxMatch = /\/docx\/([A-Za-z0-9]+)/.exec(value);
+    if (docxMatch)
+      return { kind: "docx", documentId: docxMatch[1] };
     const spaceMatch = /\/wiki\/space\/([0-9]+)/.exec(value);
     if (spaceMatch)
       return { kind: "space", spaceId: spaceMatch[1] };
     const nodeMatch = /\/wiki\/([A-Za-z0-9_-]+)/.exec(value);
     if (nodeMatch && nodeMatch[1] !== "space")
       return { kind: "node", token: nodeMatch[1] };
-    return { kind: "invalid", reason: "\u65E0\u6CD5\u4ECE\u94FE\u63A5\u91CC\u8BC6\u522B\u8282\u70B9\u6216\u7A7A\u95F4\uFF0C\u8BF7\u786E\u8BA4\u590D\u5236\u7684\u662F /wiki/ \u9875\u9762\u94FE\u63A5" };
+    return { kind: "invalid", reason: "\u65E0\u6CD5\u4ECE\u94FE\u63A5\u91CC\u8BC6\u522B\u8282\u70B9\u6216\u7A7A\u95F4\uFF0C\u8BF7\u786E\u8BA4\u590D\u5236\u7684\u662F /wiki/ \u9875\u9762\u6216 /docx/ \u6587\u6863\u94FE\u63A5" };
   }
   if (/\s/.test(value) || value.length < 8)
     return { kind: "invalid", reason: "\u5185\u5BB9\u4E0D\u50CF\u8282\u70B9\u4EE4\u724C\uFF0C\u8BF7\u7C98\u8D34 /wiki/ \u9875\u9762\u94FE\u63A5" };
@@ -1769,6 +1777,38 @@ var unescapeImageMarkup = {
   defaultEnabled: true,
   apply: (input) => input.replace(/!\\\[\\\[([^\]]*?)\\\]\\\]/g, "![[$1]]").replace(/!\\\[\\\]\(/g, "![](")
 };
+var feishuCalloutConvert = {
+  id: "feishu-callout-convert",
+  description: '\u4E0B\u884C\uFF1A\u628A\u98DE\u4E66\u9AD8\u4EAE\u5757 <callout emoji="\u2026">\u2026</callout> \u8F6C\u6210 Obsidian \u6807\u51C6 callout\uFF08> [!info] emoji\uFF0C\u6B63\u6587\u9010\u884C\u52A0\u5F15\u7528\u524D\u7F00\uFF09\u3002\u5173\u95ED\u65F6\u9AD8\u4EAE\u5757\u4EE5\u539F\u59CB\u6807\u7B7E\u4FDD\u7559\u3002\u5355\u7BC7\u4E91\u6587\u6863\u91CC\u5E38\u89C1\u3002',
+  defaultEnabled: true,
+  apply: (input) => input.replace(/<callout\b([^>]*)>([\s\S]*?)<\/callout>/g, (_match, attrs, inner) => {
+    const emoji = /emoji="([^"]*)"/.exec(attrs)?.[1]?.trim() ?? "\u{1F4A1}";
+    const lines = inner.replace(/^\n+/, "").replace(/\s+$/, "").split("\n");
+    if (lines.length === 1 && lines[0]?.trim() === "")
+      return "";
+    const quoted = lines.map((line) => `> ${line.trimEnd()}`).join("\n");
+    return `> [!info] ${emoji}
+${quoted}`;
+  })
+};
+var feishuCiteConvert = {
+  id: "feishu-cite-convert",
+  description: '\u4E0B\u884C\uFF1A\u628A\u98DE\u4E66\u6587\u6863\u5F15\u7528\u5757 <cite doc-id="\u2026">\u2026</cite> \u8F6C\u6210\u6307\u5411\u539F\u6587\u7684\u5F15\u7528\u884C\uFF08https://feishu.cn/docx/<id>\uFF09\u3002\u5173\u95ED\u65F6\u5F15\u7528\u5757\u4EE5\u539F\u59CB\u6807\u7B7E\u4FDD\u7559\u3002\u5355\u7BC7\u4E91\u6587\u6863\u91CC\u5E38\u89C1\u3002',
+  defaultEnabled: true,
+  apply: (input) => {
+    const paired = input.replace(
+      /<cite\b[^>]*doc-id="([^"]*)"[^>]*>([\s\S]*?)<\/cite>/g,
+      (_match, docId, inner) => {
+        const label = inner.trim();
+        return `> [!quote] \u98DE\u4E66\u5F15\u7528\u6587\u6863\uFF1A${label ? `${label} \xB7 ` : ""}[\u6253\u5F00\u539F\u6587](https://feishu.cn/docx/${docId})`;
+      }
+    );
+    return paired.replace(
+      /<cite\b[^>]*doc-id="([^"]*)"[^>]*\/?>/g,
+      (_match, docId) => `> [!quote] \u98DE\u4E66\u5F15\u7528\u6587\u6863\uFF1A[\u6253\u5F00\u539F\u6587](https://feishu.cn/docx/${docId})`
+    );
+  }
+};
 var imageDownload = {
   id: "image-download",
   description: "\u4E0B\u884C\uFF1A\u628A\u53D6\u56DE\u5185\u5BB9\u91CC\u7684\u98DE\u4E66\u56FE\u7247\u4E0B\u8F7D\u5230\u672C\u5730\u9644\u4EF6\u76EE\u5F55\uFF0C\u5E76\u628A\u5F15\u7528\u6539\u5199\u6210 ![[\u9644\u4EF6\u76EE\u5F55/\u6587\u4EF6\u540D]]\u3002\u9700\u8981 docs:document.media:download \u6743\u9650\uFF1B\u4E0B\u8F7D\u5931\u8D25\u65F6\u4FDD\u7559\u539F\u59CB\u5F15\u7528\u5E76\u5728\u62A5\u544A\u91CC\u8BF4\u660E\uFF0C\u4E0D\u4F1A\u8BA9\u6574\u6B21\u62C9\u53D6\u5931\u8D25\u3002",
@@ -1801,7 +1841,7 @@ var BUILT_IN_RULES = {
     footnoteDowngrade,
     imageUpload
   ],
-  toObsidian: [unescapeImageMarkup, dropTitleHeading, bookmarkToLink, restoreNativeMath, mathEscapeHash, mathTrimInlineSpaces, imageDownload, restoreImageRef]
+  toObsidian: [feishuCalloutConvert, feishuCiteConvert, unescapeImageMarkup, dropTitleHeading, bookmarkToLink, restoreNativeMath, mathEscapeHash, mathTrimInlineSpaces, imageDownload, restoreImageRef]
 };
 function entryOf(rule) {
   return { id: rule.id, enabled: rule.defaultEnabled, description: rule.description };
@@ -5222,6 +5262,7 @@ async function prepareRemoteImages(ctx, fetched, options) {
 
 // src/sync/docEngine.ts
 init_types();
+init_profileStore();
 var DocSyncEngine = class {
   constructor(deps) {
     this.deps = deps;
@@ -5254,6 +5295,9 @@ var DocSyncEngine = class {
     const settings = this.deps.getSettings();
     const logger = this.deps.logger;
     validateSettings(settings);
+    if (settings.docSource?.documentId) {
+      return await this.runSingleDoc(options, settings.docSource.documentId);
+    }
     let spaceId = parseTokenFromInput(settings.spaceId);
     let rootNodeToken = parseTokenFromInput(settings.rootNodeToken) || void 0;
     let resolvedRoot;
@@ -5413,6 +5457,78 @@ var DocSyncEngine = class {
         return { plan, report: [], executed: false };
       }
       return await this.execute(plan, options, { settings, client, spaceId, rootNodeToken, filter, rules, cache, index });
+    } catch (error) {
+      await this.deps.saveSettings();
+      throw error;
+    }
+  }
+  /**
+   * 二开：单篇云文档源（/docx/ 链接）的同步。
+   * 不走知识库树：文档本身就是唯一的"远端笔记"。复用既有的四态判定（buildDocPlan）与
+   * 执行器（executeDocPlan），因此图片下载、下行规则、只读档覆盖策略、冲突副本全部照常生效。
+   * 仅拉取：推送与远端删除在此路径上一律过滤。
+   */
+  async runSingleDoc(options, documentId) {
+    const settings = this.deps.getSettings();
+    const client = this.createClient();
+    const filter = new PathFilter(settings.excludePatterns);
+    if (options.preApprovedPlan)
+      assertPlanCurrent(options.preApprovedPlan, settings);
+    try {
+      const rules = await this.rules();
+      options.onProgress?.("\u8BFB\u53D6\u5355\u7BC7\u6587\u6863\u4FE1\u606F\u2026");
+      const metas = await batchQueryMetas(client, [documentId], "docx");
+      const meta = metas.get(documentId);
+      if (!meta) {
+        throw new Error(`\u53D6\u4E0D\u5230\u6587\u6863\u4FE1\u606F\uFF08documentId=${documentId}\uFF09\u3002\u8BF7\u786E\u8BA4\u94FE\u63A5\u662F\u65B0\u7248\u6587\u6863\uFF08/docx/\uFF09\u4E14\u4F60\u7684\u8D26\u53F7\u6709\u8BFB\u53D6\u6743\u9650\u3002`);
+      }
+      const title = meta.title?.trim() || documentId;
+      const existing = Object.entries(settings.state.docRecords).find(([, record]) => record.documentId === documentId);
+      const safeTitle = sanitizeDirName(title);
+      const baseName = safeTitle && safeTitle !== "." && safeTitle !== ".." ? safeTitle : documentId;
+      const relPath = existing?.[0] ?? prefixLocalPath(settings.localFolder, `${baseName}.md`);
+      if (filter.isExcluded(relPath)) {
+        throw new Error(`\u5355\u7BC7\u6587\u6863\u7684\u843D\u4F4D\u8DEF\u5F84\u547D\u4E2D\u6392\u9664\u89C4\u5219\uFF1A${relPath}\uFF1B\u8BF7\u8C03\u6574\u6392\u9664\u89C4\u5219\u6216\u672C\u5730\u540C\u6B65\u76EE\u5F55`);
+      }
+      this.deps.logger.info(`\u5355\u7BC7\u6587\u6863\u6A21\u5F0F\uFF1A${title} \u2192 ${relPath}`);
+      const index = {
+        notes: /* @__PURE__ */ new Map([[relPath, { relPath, documentId, nodeToken: "", title }]]),
+        containers: /* @__PURE__ */ new Map(),
+        containerTitles: /* @__PURE__ */ new Set(),
+        warnings: []
+      };
+      const local = scanLocalNotes(this.deps.app, filter, settings.localFolder);
+      const cache = createDocPlanCache();
+      const remoteModifiedTimes = /* @__PURE__ */ new Map();
+      if (meta.modifiedTime)
+        remoteModifiedTimes.set(documentId, meta.modifiedTime);
+      const planned = await buildDocPlan({
+        state: settings.state,
+        local,
+        remote: index,
+        settings,
+        rules,
+        isExcluded: (relPath2) => filter.isExcluded(relPath2),
+        recreateRemoteIfDeleted: false,
+        propagateLocalDelete: false,
+        propagateRemoteDelete: false,
+        restoreLocalDeleted: true,
+        cache,
+        forcePush: false,
+        remoteModifiedTimes,
+        verifyRemoteByContent: settings.docVerifyRemoteByContent,
+        conflictPolicy: settings.conflictPolicy ?? "keep-both",
+        readLocal: (relPath2) => readLocalText(this.deps.app, relPath2),
+        hashText: (text) => this.hashText(text),
+        hashFetched: (text) => this.hashFetched(text),
+        fetchMarkdown: (documentId2) => this.fetchMarkdown(client, documentId2)
+      });
+      const plan = deferDeletes(filterPlan(planned, "pull"), options.allowDeletes);
+      plan.settingsFingerprint = planFingerprint(settings);
+      if (options.dryRun) {
+        return { plan, report: [], executed: false };
+      }
+      return await this.execute(plan, options, { settings, client, spaceId: "", rootNodeToken: void 0, filter, rules, cache, index });
     } catch (error) {
       await this.deps.saveSettings();
       throw error;
@@ -5827,11 +5943,11 @@ var AddWikiModal = class extends import_obsidian12.Modal {
     this.titleEl.setText("\u6DFB\u52A0\u98DE\u4E66\u77E5\u8BC6\u5E93");
     this.contentEl.createEl("p", {
       cls: "setting-item-description",
-      text: "\u7C98\u8D34\u77E5\u8BC6\u5E93\u91CC\u4EFB\u610F\u9875\u9762\u7684 /wiki/ \u94FE\u63A5\uFF08\u522B\u4EBA\u7684\u516C\u5F00\u5E93\u3001\u4F60\u6709\u6743\u9650\u7684\u5E93\u90FD\u53EF\u4EE5\uFF09\uFF0C\u6216 /wiki/space/<id> \u7A7A\u95F4\u9875\u94FE\u63A5\u3002\u63D2\u4EF6\u4F1A\u81EA\u52A8\u89E3\u6790\u51FA\u7A7A\u95F4\u4E0E\u76EE\u5F55\uFF0C\u4E0D\u9700\u8981\u4F60\u53BB\u627E space_id\u3002"
+      text: "\u7C98\u8D34\u77E5\u8BC6\u5E93\u91CC\u4EFB\u610F\u9875\u9762\u7684 /wiki/ \u94FE\u63A5\u3001\u522B\u4EBA\u5206\u4EAB\u7684\u5355\u7BC7\u6587\u6863 /docx/ \u94FE\u63A5\uFF0C\u6216 /wiki/space/<id> \u7A7A\u95F4\u9875\u94FE\u63A5\u3002\u63D2\u4EF6\u4F1A\u81EA\u52A8\u89E3\u6790\u51FA\u7A7A\u95F4\u4E0E\u76EE\u5F55\uFF0C\u4E0D\u9700\u8981\u4F60\u53BB\u627E space_id\u3002"
     });
     const inputRow = new import_obsidian12.Setting(this.contentEl).setName("\u77E5\u8BC6\u5E93\u5730\u5740").setHeading();
     inputRow.addText((text) => {
-      text.setPlaceholder("https://xxx.feishu.cn/wiki/\u2026 \u6216 /wiki/space/\u2026").onChange(() => {
+      text.setPlaceholder("https://xxx.feishu.cn/wiki/\u2026 \u6216 /docx/\u2026 \u6216 /wiki/space/\u2026").onChange(() => {
         this.resolved = null;
         this.renderResult();
       });
@@ -5847,41 +5963,49 @@ var AddWikiModal = class extends import_obsidian12.Modal {
       return;
     const target = this.resolved;
     const summary = this.resultEl.createDiv({ cls: "setting-item-description" });
-    summary.createEl("div", { text: `\u7A7A\u95F4\uFF1A${target.name}\uFF08${target.spaceId}\uFF09` });
-    if (target.nodeTitle) {
-      summary.createEl("div", { text: `\u8282\u70B9\uFF1A${target.nodeTitle}${target.hasChildren ? "\uFF08\u542B\u5B50\u9875\u9762\uFF09" : "\uFF08\u65E0\u5B50\u9875\u9762\uFF09"}` });
+    if (target.documentId) {
+      summary.createEl("div", { text: `\u5355\u7BC7\u6587\u6863\uFF1A${target.name}` });
+      summary.createEl("div", { text: "\u8FD9\u662F\u4E0D\u5728\u4EFB\u4F55\u77E5\u8BC6\u5E93\u91CC\u7684\u72EC\u7ACB\u4E91\u6587\u6863\uFF0C\u53EA\u540C\u6B65\u8FD9\u4E00\u7BC7\uFF08\u4EC5\u62C9\u53D6\uFF09\u3002\u4F5C\u8005\u66F4\u65B0\u540E\uFF0C\u7528\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u5373\u53EF\u8DDF\u8FDB\u3002" });
+    } else {
+      summary.createEl("div", { text: `\u7A7A\u95F4\uFF1A${target.name}\uFF08${target.spaceId}\uFF09` });
+      if (target.nodeTitle) {
+        summary.createEl("div", { text: `\u8282\u70B9\uFF1A${target.nodeTitle}${target.hasChildren ? "\uFF08\u542B\u5B50\u9875\u9762\uFF09" : "\uFF08\u65E0\u5B50\u9875\u9762\uFF09"}` });
+      }
     }
     const scopeArea = this.resultEl.createDiv();
-    new import_obsidian12.Setting(scopeArea).setName("\u540C\u6B65\u8303\u56F4").setHeading();
-    if (target.spaceOnly) {
-      scopeArea.createEl("div", { cls: "setting-item-description", text: "\u7A7A\u95F4\u9875\u94FE\u63A5\uFF1A\u4EE5\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42\u4E3A\u540C\u6B65\u6839\uFF08\u8BE5\u5F62\u6001\u6CA1\u6709\u5355\u8282\u70B9\u6982\u5FF5\uFF09\u3002" });
-      this.scopeChoice = "space";
+    if (target.documentId) {
     } else {
-      const preferSpace = !target.hasChildren;
-      this.scopeChoice = preferSpace ? "space" : "node";
-      const options = [
-        { value: "node", label: "\u4EC5\u8BE5\u8282\u70B9\u5B50\u6811", hint: "\u628A\u8FD9\u4E2A\u9875\u9762\uFF08\u542B\u6B63\u6587\uFF0C\u53EF\u9009\uFF09\u548C\u5B83\u7684\u5B50\u9875\u9762\u62C9\u5230\u672C\u5730\uFF1B\u63A8\u9001\u4E5F\u53EA\u53D1\u751F\u5728\u8FD9\u4E2A\u5B50\u6811\u91CC" },
-        { value: "space", label: "\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42", hint: "\u4EE5\u7A7A\u95F4\u9876\u5C42\u4E3A\u540C\u6B65\u6839\uFF1B\u9875\u9762\u672C\u8EAB\u662F\u9996\u9875\u6216\u6CA1\u6709\u5B50\u9875\u9762\u65F6\u66F4\u5408\u9002" }
-      ];
-      for (const option of options) {
-        const row = scopeArea.createDiv({ cls: "feishu-wiki-option-row" });
-        const radio = row.createEl("input", { type: "radio" });
-        radio.name = "feishu-add-scope";
-        radio.value = option.value;
-        radio.checked = this.scopeChoice === option.value;
-        radio.addEventListener("change", () => {
-          if (radio.checked)
-            this.scopeChoice = option.value;
-        });
-        const box = row.createDiv();
-        box.createEl("div", { text: option.label });
-        box.createEl("div", { cls: "setting-item-description", text: option.hint });
-      }
-      if (preferSpace) {
-        scopeArea.createEl("div", {
-          cls: "setting-item-description",
-          text: "\u63D0\u793A\uFF1A\u8BE5\u8282\u70B9\u6CA1\u6709\u5B50\u9875\u9762\uFF0C\u4EE5\u5B83\u4E3A\u6839\u4F1A\u62C9\u5230\u7A7A\u5185\u5BB9\uFF0C\u5DF2\u9ED8\u8BA4\u9009\u300C\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42\u300D\u3002"
-        });
+      new import_obsidian12.Setting(scopeArea).setName("\u540C\u6B65\u8303\u56F4").setHeading();
+      if (target.spaceOnly) {
+        scopeArea.createEl("div", { cls: "setting-item-description", text: "\u7A7A\u95F4\u9875\u94FE\u63A5\uFF1A\u4EE5\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42\u4E3A\u540C\u6B65\u6839\uFF08\u8BE5\u5F62\u6001\u6CA1\u6709\u5355\u8282\u70B9\u6982\u5FF5\uFF09\u3002" });
+        this.scopeChoice = "space";
+      } else {
+        const preferSpace = !target.hasChildren;
+        this.scopeChoice = preferSpace ? "space" : "node";
+        const options = [
+          { value: "node", label: "\u4EC5\u8BE5\u8282\u70B9\u5B50\u6811", hint: "\u628A\u8FD9\u4E2A\u9875\u9762\uFF08\u542B\u6B63\u6587\uFF0C\u53EF\u9009\uFF09\u548C\u5B83\u7684\u5B50\u9875\u9762\u62C9\u5230\u672C\u5730\uFF1B\u63A8\u9001\u4E5F\u53EA\u53D1\u751F\u5728\u8FD9\u4E2A\u5B50\u6811\u91CC" },
+          { value: "space", label: "\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42", hint: "\u4EE5\u7A7A\u95F4\u9876\u5C42\u4E3A\u540C\u6B65\u6839\uFF1B\u9875\u9762\u672C\u8EAB\u662F\u9996\u9875\u6216\u6CA1\u6709\u5B50\u9875\u9762\u65F6\u66F4\u5408\u9002" }
+        ];
+        for (const option of options) {
+          const row = scopeArea.createDiv({ cls: "feishu-wiki-option-row" });
+          const radio = row.createEl("input", { type: "radio" });
+          radio.name = "feishu-add-scope";
+          radio.value = option.value;
+          radio.checked = this.scopeChoice === option.value;
+          radio.addEventListener("change", () => {
+            if (radio.checked)
+              this.scopeChoice = option.value;
+          });
+          const box = row.createDiv();
+          box.createEl("div", { text: option.label });
+          box.createEl("div", { cls: "setting-item-description", text: option.hint });
+        }
+        if (preferSpace) {
+          scopeArea.createEl("div", {
+            cls: "setting-item-description",
+            text: "\u63D0\u793A\uFF1A\u8BE5\u8282\u70B9\u6CA1\u6709\u5B50\u9875\u9762\uFF0C\u4EE5\u5B83\u4E3A\u6839\u4F1A\u62C9\u5230\u7A7A\u5185\u5BB9\uFF0C\u5DF2\u9ED8\u8BA4\u9009\u300C\u6574\u4E2A\u7A7A\u95F4\u9876\u5C42\u300D\u3002"
+          });
+        }
       }
     }
     this.localFolder = suggestLocalFolder(this.deps.settings().localFolder, target.name);
@@ -5891,30 +6015,38 @@ var AddWikiModal = class extends import_obsidian12.Modal {
       });
     });
     new import_obsidian12.Setting(this.resultEl).setName("\u540C\u6B65\u65B9\u5F0F").setHeading();
-    const directionOptions = [
-      { value: "pull", label: "\u4EC5\u62C9\u53D6\uFF08\u53EA\u8BFB\uFF09", hint: "\u53EA\u628A\u8FDC\u7AEF\u5185\u5BB9\u62C9\u5230\u672C\u5730\u5B66\u4E60\uFF1B\u51B2\u7A81\u9ED8\u8BA4\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF0C\u672C\u5730\u65E7\u7248\u81EA\u52A8\u53E6\u5B58\u526F\u672C" },
-      { value: "both", label: "\u53CC\u5411\u534F\u4F5C", hint: "\u672C\u5730\u4E0E\u8FDC\u7AEF\u4E92\u76F8\u540C\u6B65\uFF1B\u9002\u5408\u4F60\u81EA\u5DF1\u6709\u7F16\u8F91\u6743\u9650\u3001\u4E24\u8FB9\u90FD\u8981\u5199\u7684\u5E93" },
-      { value: "push", label: "\u4EC5\u63A8\u9001", hint: "\u628A\u672C\u5730\u5185\u5BB9\u5B9A\u671F\u53D1\u5E03\u5230\u8FDC\u7AEF\uFF1B\u4E0D\u62C9\u53D6\u8FDC\u7AEF\u6539\u52A8" }
-    ];
-    this.direction = "pull";
-    for (const option of directionOptions) {
-      const row = this.resultEl.createDiv({ cls: "feishu-wiki-option-row" });
-      const radio = row.createEl("input", { type: "radio" });
-      radio.name = "feishu-add-direction";
-      radio.value = option.value;
-      radio.checked = this.direction === option.value;
-      radio.addEventListener("change", () => {
-        if (radio.checked)
-          this.direction = option.value;
+    if (target.documentId) {
+      this.direction = "pull";
+      this.resultEl.createEl("div", {
+        cls: "setting-item-description",
+        text: "\u4EC5\u62C9\u53D6\uFF08\u53EA\u8BFB\uFF09\uFF1A\u628A\u8FD9\u7BC7\u6587\u6863\u62C9\u5230\u672C\u5730\u5E76\u8DDF\u8FDB\u4F5C\u8005\u66F4\u65B0\u3002\u5355\u7BC7\u5206\u4EAB\u6587\u6863\u4E0D\u652F\u6301\u63A8\u9001\u3002"
       });
-      const box = row.createDiv();
-      box.createEl("div", { text: option.label });
-      box.createEl("div", { cls: "setting-item-description", text: option.hint });
+    } else {
+      const directionOptions = [
+        { value: "pull", label: "\u4EC5\u62C9\u53D6\uFF08\u53EA\u8BFB\uFF09", hint: "\u53EA\u628A\u8FDC\u7AEF\u5185\u5BB9\u62C9\u5230\u672C\u5730\u5B66\u4E60\uFF1B\u51B2\u7A81\u9ED8\u8BA4\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF0C\u672C\u5730\u65E7\u7248\u81EA\u52A8\u53E6\u5B58\u526F\u672C" },
+        { value: "both", label: "\u53CC\u5411\u534F\u4F5C", hint: "\u672C\u5730\u4E0E\u8FDC\u7AEF\u4E92\u76F8\u540C\u6B65\uFF1B\u9002\u5408\u4F60\u81EA\u5DF1\u6709\u7F16\u8F91\u6743\u9650\u3001\u4E24\u8FB9\u90FD\u8981\u5199\u7684\u5E93" },
+        { value: "push", label: "\u4EC5\u63A8\u9001", hint: "\u628A\u672C\u5730\u5185\u5BB9\u5B9A\u671F\u53D1\u5E03\u5230\u8FDC\u7AEF\uFF1B\u4E0D\u62C9\u53D6\u8FDC\u7AEF\u6539\u52A8" }
+      ];
+      this.direction = "pull";
+      for (const option of directionOptions) {
+        const row = this.resultEl.createDiv({ cls: "feishu-wiki-option-row" });
+        const radio = row.createEl("input", { type: "radio" });
+        radio.name = "feishu-add-direction";
+        radio.value = option.value;
+        radio.checked = this.direction === option.value;
+        radio.addEventListener("change", () => {
+          if (radio.checked)
+            this.direction = option.value;
+        });
+        const box = row.createDiv();
+        box.createEl("div", { text: option.label });
+        box.createEl("div", { cls: "setting-item-description", text: option.hint });
+      }
+      this.resultEl.createEl("div", {
+        cls: "setting-item-description",
+        text: "\u4E0D\u786E\u5B9A\u6743\u9650\u65F6\u9009\u300C\u4EC5\u62C9\u53D6\uFF08\u53EA\u8BFB\uFF09\u300D\u6700\u5B89\u5168\uFF1A\u5982\u679C\u4E4B\u540E\u53D1\u73B0\u6709\u7F16\u8F91\u6743\u9650\uFF0C\u968F\u65F6\u53EF\u4EE5\u5728\u8BBE\u7F6E\u91CC\u6539\u6210\u53CC\u5411\u534F\u4F5C\u3002"
+      });
     }
-    this.resultEl.createEl("div", {
-      cls: "setting-item-description",
-      text: "\u4E0D\u786E\u5B9A\u6743\u9650\u65F6\u9009\u300C\u4EC5\u62C9\u53D6\uFF08\u53EA\u8BFB\uFF09\u300D\u6700\u5B89\u5168\uFF1A\u5982\u679C\u4E4B\u540E\u53D1\u73B0\u6709\u7F16\u8F91\u6743\u9650\uFF0C\u968F\u65F6\u53EF\u4EE5\u5728\u8BBE\u7F6E\u91CC\u6539\u6210\u53CC\u5411\u534F\u4F5C\u3002"
-    });
     new import_obsidian12.Setting(this.resultEl).addButton(
       (button) => button.setButtonText("\u5B8C\u6210\u5E76\u5F00\u59CB\u9996\u6B21\u540C\u6B65\uFF08\u9884\u89C8\uFF09").setCta().onClick(() => void this.confirm())
     ).addExtraButton((button) => button.setIcon("cross").setTooltip("\u53D6\u6D88").onClick(() => this.close()));
@@ -5930,6 +6062,25 @@ var AddWikiModal = class extends import_obsidian12.Modal {
     this.busy = true;
     try {
       const client = this.deps.createClient();
+      if (parsed.kind === "docx") {
+        const metas = await batchQueryMetas(client, [parsed.documentId], "docx");
+        const meta = metas.get(parsed.documentId);
+        if (!meta) {
+          new import_obsidian12.Notice("\u89E3\u6790\u5931\u8D25\uFF1A\u53D6\u4E0D\u5230\u8FD9\u7BC7\u6587\u6863\u7684\u4FE1\u606F\u3002\u8BF7\u786E\u8BA4\u94FE\u63A5\u662F\u65B0\u7248\u6587\u6863\uFF08/docx/\uFF09\u4E14\u4F60\u7684\u8D26\u53F7\u6709\u8BFB\u53D6\u6743\u9650\uFF08\u5148\u5728\u98DE\u4E66\u91CC\u6253\u5F00\u4E00\u6B21\u518D\u8BD5\uFF09\u3002", 8e3);
+          return;
+        }
+        this.resolved = {
+          spaceId: "",
+          nodeToken: "",
+          name: meta.title?.trim() || `\u6587\u6863 ${parsed.documentId}`,
+          nodeTitle: "",
+          hasChildren: false,
+          spaceOnly: false,
+          documentId: parsed.documentId
+        };
+        this.renderResult();
+        return;
+      }
       if (parsed.kind === "node") {
         const node = await getNodeByToken(client, parsed.token, "wiki");
         const spaceId = ((node?.node_type === "shortcut" ? node?.origin_space_id : node?.space_id) ?? "").trim();
@@ -5993,32 +6144,34 @@ var AddWikiModal = class extends import_obsidian12.Modal {
       return;
     }
     const profileId = newProfileId();
+    const isSingleDoc = Boolean(this.resolved.documentId);
     createAndActivateProfile(settings, {
       id: profileId,
       name,
-      direction: this.direction,
-      conflictPolicy: this.direction === "pull" ? "remote-wins" : "keep-both",
+      direction: isSingleDoc ? "pull" : this.direction,
+      conflictPolicy: isSingleDoc || this.direction === "pull" ? "remote-wins" : "keep-both",
+      docSource: this.resolved.documentId ? { documentId: this.resolved.documentId } : void 0,
       target: {
-        spaceId: this.resolved.spaceId,
-        rootNodeToken: this.scopeChoice === "node" ? this.resolved.nodeToken : "",
+        spaceId: isSingleDoc ? "" : this.resolved.spaceId,
+        rootNodeToken: !isSingleDoc && this.scopeChoice === "node" ? this.resolved.nodeToken : "",
         rootPageTitle: "",
-        includeRootPage: this.scopeChoice === "node",
+        includeRootPage: !isSingleDoc && this.scopeChoice === "node",
         localFolder: this.localFolder,
-        syncMode: settings.syncMode,
+        syncMode: isSingleDoc ? "doc" : settings.syncMode,
         folderMode: settings.folderMode,
         flatSeparator: settings.flatSeparator,
         excludePatterns: settings.excludePatterns,
         attachmentFolder: settings.attachmentFolder,
         attachmentLinkStyle: settings.attachmentLinkStyle,
         docVerifyRemoteByContent: settings.docVerifyRemoteByContent,
-        restoreLocalDeleted: this.direction === "pull" ? true : settings.restoreLocalDeleted,
+        restoreLocalDeleted: isSingleDoc || this.direction === "pull" ? true : settings.restoreLocalDeleted,
         recreateRemoteIfDeleted: false,
         propagateLocalDelete: false,
         propagateRemoteDelete: false,
         showPlanBeforeSync: true
       }
     });
-    await this.deps.onFinish?.({ profileId, direction: this.direction });
+    await this.deps.onFinish?.({ profileId, direction: isSingleDoc ? "pull" : this.direction });
     this.close();
   }
 };
@@ -6137,13 +6290,26 @@ async function countDocChanges(client, settings, logger) {
   }
   return { changed, added, at: Date.now() };
 }
+async function countSingleDocChanges(client, settings) {
+  const documentId = settings.docSource.documentId;
+  const record = Object.values(settings.state.docRecords).find((item3) => item3.documentId === documentId);
+  if (!record)
+    return { changed: 0, added: 1, at: Date.now() };
+  try {
+    const metas = await batchQueryMetas(client, [documentId], "docx");
+    const meta = metas.get(documentId);
+    return { changed: hasBaselineChange(record.remoteModifiedTime, meta?.modifiedTime) ? 1 : 0, added: 0, at: Date.now() };
+  } catch {
+    return { changed: 0, added: 0, at: Date.now() };
+  }
+}
 async function checkOneKnowledgeBase(settings, profileId, deps) {
   const profile = (settings.profiles ?? []).find((item3) => item3.id === profileId);
   if (!profile)
     return void 0;
   activateProfile(settings, profileId);
   const client = deps.createClient();
-  const info = settings.syncMode === "doc" ? await countDocChanges(client, settings, deps.logger) : await countMdChanges(client, settings, deps.logger);
+  const info = settings.docSource?.documentId ? await countSingleDocChanges(client, settings) : settings.syncMode === "doc" ? await countDocChanges(client, settings, deps.logger) : await countMdChanges(client, settings, deps.logger);
   profile.updateInfo = info;
   return info;
 }
@@ -6269,7 +6435,7 @@ var WikiPanelModal = class extends import_obsidian13.Modal {
       titleLine.createEl("span", { text: "\u5F53\u524D", cls: "feishu-wiki-row-active" });
     const meta = [];
     meta.push(profile.target.localFolder || "vault \u6839\u76EE\u5F55");
-    meta.push(profile.target.syncMode === "doc" ? "\u6587\u6863\u6A21\u5F0F" : "\u6587\u4EF6\u955C\u50CF");
+    meta.push(profile.docSource?.documentId ? "\u5355\u7BC7\u6587\u6863\uFF08\u53EA\u8BFB\uFF09" : profile.target.syncMode === "doc" ? "\u6587\u6863\u6A21\u5F0F" : "\u6587\u4EF6\u955C\u50CF");
     const last = profile.state?.lastSyncAt ? new Date(profile.state.lastSyncAt).toLocaleString(void 0, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "\u4ECE\u672A\u540C\u6B65";
     meta.push(`\u4E0A\u6B21\u540C\u6B65 ${last}`);
     info.createDiv({ cls: "feishu-wiki-row-meta", text: meta.join(" \xB7 ") });
@@ -6633,6 +6799,10 @@ var FeishuWikiSyncPlugin = class extends import_obsidian14.Plugin {
         if (!quiet)
           new import_obsidian14.Notice("\u5F53\u524D\u77E5\u8BC6\u5E93\u4E3A\u300C\u4EC5\u63A8\u9001\u300D\uFF0C\u5DF2\u6309\u4EC5\u63A8\u9001\u6267\u884C", 4e3);
       }
+    }
+    if (options.forcePush && this.settings.docSource?.documentId) {
+      new import_obsidian14.Notice("\u5355\u7BC7\u4E91\u6587\u6863\u4EC5\u652F\u6301\u53EA\u8BFB\u62C9\u53D6\uFF0C\u4E0D\u9002\u7528\u5F3A\u5236\u91CD\u63A8\uFF1B\u5982\u9700\u5237\u65B0\u8BF7\u76F4\u63A5\u6267\u884C\u62C9\u53D6");
+      return;
     }
     if (options.forcePush && this.settings.syncMode !== "doc") {
       new import_obsidian14.Notice("\u5F3A\u5236\u91CD\u63A8\u4EC5\u7528\u4E8E\u6587\u6863\u6A21\u5F0F\uFF1B\u6587\u4EF6\u955C\u50CF\u6A21\u5F0F\u8BF7\u4F7F\u7528\u666E\u901A\u540C\u6B65");

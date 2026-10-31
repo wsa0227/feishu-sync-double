@@ -19,7 +19,8 @@ import { sha256Hex } from "./hash";
 import type { ReportEntry } from "./executor";
 import { PathFilter, readLocalBytes, scanLocalNotes } from "./scanner";
 import type { LocalNote, PluginSettings, SyncPlan, UnsyncedNodeGroup } from "./types";
-import { basenameOf, countUnsyncedLeafNodes, dirnameOf, stripLocalFolder } from "./types";
+import { basenameOf, countUnsyncedLeafNodes, dirnameOf, prefixLocalPath, stripLocalFolder } from "./types";
+import { sanitizeDirName } from "./profileStore";
 
 export interface DocEngineDeps {
   app: App;
@@ -65,6 +66,10 @@ export class DocSyncEngine {
     const settings = this.deps.getSettings();
     const logger = this.deps.logger;
     validateSettings(settings);
+    // 二开：单篇云文档源（/docx/ 链接）——不走知识库树的独立同步路径，仅拉取
+    if (settings.docSource?.documentId) {
+      return await this.runSingleDoc(options, settings.docSource.documentId);
+    }
     let spaceId = parseTokenFromInput(settings.spaceId);
     // 留空表示以知识空间顶层为同步根：vault 的一级目录会成为知识库的一级页面
     let rootNodeToken = parseTokenFromInput(settings.rootNodeToken) || undefined;
@@ -246,6 +251,84 @@ export class DocSyncEngine {
         return { plan, report: [], executed: false };
       }
       return await this.execute(plan, options, { settings, client, spaceId, rootNodeToken, filter, rules, cache, index });
+    } catch (error) {
+      await this.deps.saveSettings();
+      throw error;
+    }
+  }
+
+  /**
+   * 二开：单篇云文档源（/docx/ 链接）的同步。
+   * 不走知识库树：文档本身就是唯一的"远端笔记"。复用既有的四态判定（buildDocPlan）与
+   * 执行器（executeDocPlan），因此图片下载、下行规则、只读档覆盖策略、冲突副本全部照常生效。
+   * 仅拉取：推送与远端删除在此路径上一律过滤。
+   */
+  private async runSingleDoc(options: RunOptions, documentId: string): Promise<RunResult> {
+    const settings = this.deps.getSettings();
+    const client = this.createClient();
+    const filter = new PathFilter(settings.excludePatterns);
+    // 预览一致性校验最先做（与 wiki 路径同一原则）
+    if (options.preApprovedPlan) assertPlanCurrent(options.preApprovedPlan, settings);
+
+    try {
+      const rules = await this.rules();
+      options.onProgress?.("读取单篇文档信息…");
+      const metas = await batchQueryMetas(client, [documentId], "docx");
+      const meta = metas.get(documentId);
+      if (!meta) {
+        throw new Error(`取不到文档信息（documentId=${documentId}）。请确认链接是新版文档（/docx/）且你的账号有读取权限。`);
+      }
+      const title = meta.title?.trim() || documentId;
+      // 本地落位：沿用既有映射的路径（作者改名不挪文件）；首次落盘用当前标题
+      const existing = Object.entries(settings.state.docRecords).find(([, record]) => record.documentId === documentId);
+      const safeTitle = sanitizeDirName(title);
+      const baseName = safeTitle && safeTitle !== "." && safeTitle !== ".." ? safeTitle : documentId;
+      const relPath = existing?.[0] ?? prefixLocalPath(settings.localFolder, `${baseName}.md`);
+      if (filter.isExcluded(relPath)) {
+        throw new Error(`单篇文档的落位路径命中排除规则：${relPath}；请调整排除规则或本地同步目录`);
+      }
+      this.deps.logger.info(`单篇文档模式：${title} → ${relPath}`);
+
+      // 合成只含这一篇文档的远端索引，后续判定与执行与知识库模式完全一致
+      const index: DocRemoteIndex = {
+        notes: new Map([[relPath, { relPath, documentId, nodeToken: "", title }]]),
+        containers: new Map(),
+        containerTitles: new Set(),
+        warnings: [],
+      };
+      const local: Map<string, LocalNote> = scanLocalNotes(this.deps.app, filter, settings.localFolder);
+      const cache = createDocPlanCache();
+      const remoteModifiedTimes = new Map<string, string>();
+      if (meta.modifiedTime) remoteModifiedTimes.set(documentId, meta.modifiedTime);
+
+      const planned = await buildDocPlan({
+        state: settings.state,
+        local,
+        remote: index,
+        settings,
+        rules,
+        isExcluded: (relPath) => filter.isExcluded(relPath),
+        recreateRemoteIfDeleted: false,
+        propagateLocalDelete: false,
+        propagateRemoteDelete: false,
+        restoreLocalDeleted: true,
+        cache,
+        forcePush: false,
+        remoteModifiedTimes,
+        verifyRemoteByContent: settings.docVerifyRemoteByContent,
+        conflictPolicy: settings.conflictPolicy ?? "keep-both",
+        readLocal: (relPath) => readLocalText(this.deps.app, relPath),
+        hashText: (text) => this.hashText(text),
+        hashFetched: (text) => this.hashFetched(text),
+        fetchMarkdown: (documentId) => this.fetchMarkdown(client, documentId),
+      });
+      // 单篇源仅拉取：推送、远端删除一律拦掉
+      const plan = deferDeletes(filterPlan(planned, "pull"), options.allowDeletes);
+      plan.settingsFingerprint = planFingerprint(settings);
+      if (options.dryRun) {
+        return { plan, report: [], executed: false };
+      }
+      return await this.execute(plan, options, { settings, client, spaceId: "", rootNodeToken: undefined, filter, rules, cache, index });
     } catch (error) {
       await this.deps.saveSettings();
       throw error;

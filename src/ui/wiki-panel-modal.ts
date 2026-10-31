@@ -135,7 +135,7 @@ export class WikiPanelModal extends Modal {
 
     const meta: string[] = [];
     meta.push(profile.target.localFolder || "vault 根目录");
-    meta.push(profile.target.syncMode === "doc" ? "文档模式" : "文件镜像");
+    meta.push(profile.docSource?.documentId ? "单篇文档（只读）" : profile.target.syncMode === "doc" ? "文档模式" : "文件镜像");
     const last = profile.state?.lastSyncAt
       ? new Date(profile.state.lastSyncAt).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
       : "从未同步";

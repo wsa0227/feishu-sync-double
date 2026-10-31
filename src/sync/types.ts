@@ -223,6 +223,11 @@ export interface ProfileUpdateInfo {
   at: number;
 }
 
+/** 二开：单篇云文档源（/docx/ 链接，不在任何知识库里）。设置后该条目只同步这一篇文档，仅拉取。 */
+export interface DocSource {
+  documentId: string;
+}
+
 /** 二开：一个同步目标（知识库 × 本地目录 × 方向档位）的完整快照 */
 export interface SyncTargetProfile {
   id: string;
@@ -252,6 +257,8 @@ export interface SyncTargetProfile {
   state?: SyncState;
   /** 二开：最近一次"检查更新"的结果（只探测不拉取），知识库面板与状态栏据此显示更新标识 */
   updateInfo?: ProfileUpdateInfo;
+  /** 二开：单篇云文档源；设置后本条目不走知识库树，只同步这一篇文档（仅拉取） */
+  docSource?: DocSource;
 }
 
 export interface PluginSettings {
@@ -297,6 +304,8 @@ export interface PluginSettings {
   profiles?: SyncTargetProfile[];
   /** 二开：当前激活的目标 id */
   activeProfileId?: string;
+  /** 二开：单篇云文档源（当前激活目标为单篇模式时的活视图，随目标切换） */
+  docSource?: DocSource;
 }
 
 /**

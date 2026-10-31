@@ -285,6 +285,10 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
         if (!quiet) new Notice("当前知识库为「仅推送」，已按仅推送执行", 4000);
       }
     }
+    if (options.forcePush && this.settings.docSource?.documentId) {
+      new Notice("单篇云文档仅支持只读拉取，不适用强制重推；如需刷新请直接执行拉取");
+      return;
+    }
     if (options.forcePush && this.settings.syncMode !== "doc") {
       new Notice("强制重推仅用于文档模式；文件镜像模式请使用普通同步");
       return;

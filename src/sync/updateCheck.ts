@@ -147,6 +147,21 @@ async function countDocChanges(client: FeishuClient, settings: PluginSettings, l
   return { changed, added, at: Date.now() };
 }
 
+/** 单篇云文档源：一篇文档就是全部远端，探测 = 一次批量元数据。 */
+async function countSingleDocChanges(client: FeishuClient, settings: PluginSettings): Promise<ProfileUpdateInfo> {
+  const documentId = settings.docSource!.documentId;
+  const record = Object.values(settings.state.docRecords).find((item) => item.documentId === documentId);
+  if (!record) return { changed: 0, added: 1, at: Date.now() };
+  try {
+    const metas = await batchQueryMetas(client, [documentId], "docx");
+    const meta = metas.get(documentId);
+    return { changed: hasBaselineChange(record.remoteModifiedTime, meta?.modifiedTime) ? 1 : 0, added: 0, at: Date.now() };
+  } catch {
+    // 元数据拿不到时不猜：维持"无更新"，下次完整同步会以取回内容为准
+    return { changed: 0, added: 0, at: Date.now() };
+  }
+}
+
 /**
  * 检查单个知识库的更新：临时激活该知识库（复用平铺字段与排除规则），结果写回它的 updateInfo。
  * 不落盘、不恢复激活状态——由调用方决定。
@@ -160,9 +175,11 @@ export async function checkOneKnowledgeBase(
   if (!profile) return undefined;
   activateProfile(settings, profileId);
   const client = deps.createClient();
-  const info = settings.syncMode === "doc"
-    ? await countDocChanges(client, settings, deps.logger)
-    : await countMdChanges(client, settings, deps.logger);
+  const info = settings.docSource?.documentId
+    ? await countSingleDocChanges(client, settings)
+    : settings.syncMode === "doc"
+      ? await countDocChanges(client, settings, deps.logger)
+      : await countMdChanges(client, settings, deps.logger);
   profile.updateInfo = info;
   return info;
 }
