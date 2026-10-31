@@ -1,0 +1,47 @@
+name: Release
+
+# 推送形如 0.2.2 的版本 tag 时自动：全量测试 → 构建 → 生成构建证明 → 发布 Release。
+# 这满足官方"从源码经 CI 构建发布"的要求，并附带 artifact attestations。
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run package
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/feishu-sync-double/main.js
+            dist/feishu-sync-double/manifest.json
+            dist/feishu-sync-double/styles.css
+            dist/feishu-sync-double-*.zip
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/feishu-sync-double/main.js
+            dist/feishu-sync-double/manifest.json
+            dist/feishu-sync-double/styles.css
+            dist/feishu-sync-double-*.zip
+            dist/SHA256SUMS

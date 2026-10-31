@@ -3,9 +3,15 @@
 > [!NOTE]
 > **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**，不是官方发布渠道。在上游 0.1.2 的基础上做了若干增强；感谢上游作者的工作。本仓库的 [Releases 页面](https://github.com/wsa0227/feishu-sync-double/releases)提供二开版本的安装包。
 
-将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.1**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
+将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.2**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
 
 仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入。上游版本已上架 Obsidian 社区插件市场；本二开版本以独立 ID `feishu-sync-double` 提交上架中。
+
+## English
+
+**Feishu Wiki Sync Double** is a desktop Obsidian plugin that keeps your vault in sync with Feishu wikis. Paste a link to a shared wiki or a single shared document and the whole tree lands locally as Markdown — content, images, and folder structure included. A status-bar panel manages multiple wikis at once: "check updates" is fetch-only (changes get flagged before anything is pulled), so you can pull one wiki or all of them with one click. Wikis you own can sync both ways — notes written in Obsidian publish straight back to Feishu docs. Conflict-safe by default: nothing is deleted silently, and overwritten work is backed up. Free and open source.
+
+Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 
 ## 为什么做这件事
 
@@ -60,7 +66,7 @@
 - 单篇 `/docx/` 文档：拉取、图片本地化、callout/cite 转换、更新跟进
 - 三档位方向控制（仅拉取/双向/仅推送）加误推拦截
 - 设置页分组：授权等一次性配置收进抽屉，授权失效一键重授权
-- `0.2.1` 已发布 [Release](https://github.com/wsa0227/feishu-sync-double/releases)
+- `0.2.2` 已发布 [Release](https://github.com/wsa0227/feishu-sync-double/releases)
 
 还没做的：
 
@@ -75,7 +81,7 @@
 
 快速上手：
 
-1. 从 [Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载 `feishu-sync-double-0.2.1.zip`，解压到 `.obsidian/plugins/`，启用插件
+1. 从 [Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载 `feishu-sync-double-0.2.2.zip`，解压到 `.obsidian/plugins/`，启用插件
 2. 在飞书开放平台建一个自建应用并授权（一次性，约 5-10 分钟）
 3. 点右下角状态栏 → **添加知识库** → 粘贴链接
 
@@ -122,9 +128,9 @@
 
 ### 使用构建好的安装包
 
-从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.1`）：
+从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.2`）：
 
-1. 下载并解压 `feishu-sync-double-0.2.1.zip`，得到 `feishu-sync-double` 文件夹。
+1. 下载并解压 `feishu-sync-double-0.2.2.zip`，得到 `feishu-sync-double` 文件夹。
 2. 关闭 Obsidian，将该文件夹放入目标仓库的 `.obsidian/plugins/` 下。最终应为：
 
    ```text
@@ -159,7 +165,7 @@ dist/
 │   ├── main.js
 │   ├── manifest.json
 │   └── styles.css
-├── feishu-sync-double-0.2.1.zip
+├── feishu-sync-double-0.2.2.zip
 └── SHA256SUMS
 ```
 
@@ -173,7 +179,7 @@ npm run install:vault -- "/完整路径/你的仓库"
 
 脚本会先构建，再检查仓库是否已有 `.obsidian` 目录，备份原有的三个安装文件到插件目录内的 `.backup-时间戳/`，最后替换文件；账号、映射与规则不变。没有指定路径时直接报错，不会猜测安装位置。也支持通过 `OBSIDIAN_VAULT` 指定仓库；自定义 Obsidian 配置目录可使用 `OBSIDIAN_CONFIG_DIR`（相对仓库路径）。
 
-发布时必须让 GitHub Release 标签与 `manifest.json` 的 `version` 完全一致（例如 `0.2.1`），并分别上传 `main.js`、`manifest.json`、`styles.css`；ZIP 供手动安装使用，不能替代这三个附件。以后更新需同步修改 `package.json`、锁文件、`manifest.json` 和 `versions.json`，重新构建后创建新版本。发布元数据可用 `node scripts/check-release.mjs <版本号>` 预先校验。
+发布时必须让 GitHub Release 标签与 `manifest.json` 的 `version` 完全一致（例如 `0.2.2`），并分别上传 `main.js`、`manifest.json`、`styles.css`；ZIP 供手动安装使用，不能替代这三个附件。以后更新需同步修改 `package.json`、锁文件、`manifest.json` 和 `versions.json`，重新构建后创建新版本。发布元数据可用 `node scripts/check-release.mjs <版本号>` 预先校验。
 
 ## 与上游的差异
 

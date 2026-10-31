@@ -1,6 +1,8 @@
 # Obsidian 社区插件提交准备
 
-> **二开版本提交（2026-10-31）：** 上游 `feishu-wiki-sync`（chenqaq123/ObsidianSync）已收录于官方目录，ID 与名称均被占用。本仓库二开版本以**新 ID `feishu-sync-double`**、名称 **Feishu Wiki Sync Double**、作者 **wsa0227** 作为新插件提交，PR/提交说明中声明 fork 关系与实质新增功能（多目标面板、更新检查、单篇文档同步等）。准备版本：`0.2.1`。本文其余章节为上游 0.1.2 的历史提交准备记录，保留备查。
+> **二开版本提交（2026-10-31）：** 上游 `feishu-wiki-sync`（chenqaq123/ObsidianSync）已收录于官方目录，ID 与名称均被占用。本仓库二开版本以**新 ID `feishu-sync-double`**、名称 **Feishu Wiki Sync Double**、作者 **wsa0227** 作为新插件提交，PR/提交说明中声明 fork 关系与实质新增功能（多目标面板、更新检查、单篇文档同步等）。准备版本：`0.2.2`。本文其余章节为上游 0.1.2 的历史提交准备记录，保留备查。
+
+**自动检查教训（0.2.1）**：manifest description 不能包含 "Obsidian" 一词；README 需含英文说明；Release 需带描述；构建产物应经 CI 生成并附 artifact attestations；zip 与 SHA256SUMS 属于"额外文件"（Obsidian 不下载，仅供手动安装，可保留）。`.github/workflows/release.yml` 已配置：推送版本 tag 自动跑全量测试并发布带 attestations 的 Release。
 
 ## 二开版本（feishu-sync-double）提交清单
 

@@ -1,10 +1,10 @@
 {
   "id": "feishu-sync-double",
   "name": "Feishu Wiki Sync Double",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minAppVersion": "1.13.7",
   "author": "wsa0227",
   "authorUrl": "https://github.com/wsa0227",
-  "description": "Sync Obsidian notes with multiple Feishu wikis: follow shared wikis and single documents, track updates, pull changes with one click, and publish your notes as Feishu docs. Enhanced fork of feishu-wiki-sync.",
+  "description": "Sync Markdown notes with multiple Feishu wikis: follow shared wikis and single documents, track updates, pull changes with one click, and publish your notes as Feishu docs. Enhanced fork of feishu-wiki-sync.",
   "isDesktopOnly": true
 }
