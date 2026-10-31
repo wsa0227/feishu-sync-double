@@ -510,14 +510,28 @@ class FakeFeishu {
     for (const segment of segments) {
       let node = [...this.nodes.values()].find((item) => item.parentNodeToken === parent && item.title === segment);
       if (!node) {
+        const containerObjToken = this.nextToken("doxcn");
         node = this.createNode({
           nodeToken: this.nextToken("wikcn"),
-          objToken: this.nextToken("doxcn"),
+          objToken: containerObjToken,
           objType: "docx",
           parentNodeToken: parent,
           title: segment,
           nodeType: "origin",
         });
+        // 二开：真实飞书里 docx 容器节点本身就是一篇（通常是空的）文档，取回/元数据接口都要能命中
+        const document: FakeDocument = {
+          documentId: containerObjToken,
+          title: segment,
+          content: `<title>${segment}</title>`,
+          revision: 1,
+          modifyTime: this.tickDocTime(),
+          url: `https://example.feishu.cn/docx/${containerObjToken}`,
+          blocks: [],
+          remoteImages: [],
+        };
+        this.documents.set(containerObjToken, document);
+        document.nodeToken = node.nodeToken;
       }
       parent = node.nodeToken;
     }
@@ -547,6 +561,33 @@ class FakeFeishu {
     ok(node, `removeRemoteFile：远端不存在 ${relPath}`);
     this.files.delete(node.objToken);
     this.nodes.delete(node.nodeToken);
+  }
+
+  /** 二开测试辅助：模拟"知识库里已存在一篇 docx 文档"（可挂子页面、可带正文），节点与文档一次建好。 */
+  seedWikiDocument(options: { title: string; content: string; parentNodeToken?: string }): { nodeToken: string; documentId: string } {
+    const documentId = this.nextToken("doxcnSeed");
+    const nodeToken = this.nextToken("wikcnSeed");
+    const document: FakeDocument = {
+      documentId,
+      title: docTitleOf(options.content) || options.title,
+      content: options.content,
+      revision: 1,
+      modifyTime: this.tickDocTime(),
+      url: `https://example.feishu.cn/docx/${documentId}`,
+      blocks: this.placeholderBlocks(options.content),
+      remoteImages: [],
+    };
+    this.documents.set(documentId, document);
+    document.nodeToken = nodeToken;
+    this.createNode({
+      nodeToken,
+      objToken: documentId,
+      objType: "docx",
+      parentNodeToken: options.parentNodeToken,
+      title: options.title,
+      nodeType: "origin",
+    });
+    return { nodeToken, documentId };
   }
 
   fileTokenAt(relPath: string): string {
@@ -1054,6 +1095,19 @@ class FakeFeishu {
       title: body.title ?? "",
       nodeType: body.node_type ?? "origin",
     });
+    // 二开：真实飞书里新建的 docx 容器节点本身就是一篇空文档（取回/元数据接口都能命中）
+    const document: FakeDocument = {
+      documentId: node.objToken,
+      title: node.title,
+      content: `<title>${node.title}</title>`,
+      revision: 1,
+      modifyTime: this.tickDocTime(),
+      url: `https://example.feishu.cn/docx/${node.objToken}`,
+      blocks: [],
+      remoteImages: [],
+    };
+    this.documents.set(node.objToken, document);
+    document.nodeToken = node.nodeToken;
     this.nodeCreations.push({
       title: body.title ?? "",
       hasParentField: Boolean(body.parent_node_token),
@@ -2293,6 +2347,100 @@ async function main(): Promise<void> {
     return `${docPaths.length} 篇笔记建了 ${docPaths.length} 篇文档、${docFake.nodeCreations.length} 个容器页面，全部 move 到位（obj_type=docx）`;
   });
 
+  await scenario("15b 文档模式：带正文的容器文档拉成笔记（空容器仍只当目录，补正文后能跟上）", async () => {
+    const fake = new FakeFeishu({ seedRootNode: false });
+    __setRequestUrlHandler(fake.handler);
+    try {
+      // 远端：顶层一篇普通文档；一个"真文档挂子页"的容器；一个空容器挂子页
+      fake.seedWikiDocument({ title: "普通文档", content: "<title>普通文档</title>\n普通文档的正文。\n" });
+      const rich = fake.seedWikiDocument({ title: "Day课程", content: "<title>Day课程</title>\n容器自身的正文。\n" });
+      fake.seedWikiDocument({ title: "子页面", content: "<title>子页面</title>\n子页面正文。\n", parentNodeToken: rich.nodeToken });
+      const empty = fake.seedWikiDocument({ title: "空容器", content: "<title>空容器</title>" });
+      fake.seedWikiDocument({ title: "空容器子页", content: "<title>空容器子页</title>\n空容器的子页正文。\n", parentNodeToken: empty.nodeToken });
+
+      const vaultRoot = path.join(TMP_ROOT, "vault-doc-container");
+      fs.mkdirSync(vaultRoot, { recursive: true });
+      const h = createDocHarness(fake, vaultRoot, { localFolder: "" });
+
+      // 第 1 轮：全量拉取
+      const first = await runDocRound(h, "容器正文第 1 轮：首轮拉取", "pull");
+      eq(first.result.plan.counts["create-local"] ?? 0, 4, "create-local 数量（容器正文 + 子页 + 普通文档 + 空容器子页；空容器被剔除）");
+      eq(first.delta.docsFetch, 5, "取回次数 = 容器校验 2（Day课程+空容器）+ 新建拉回 3（Day课程 命中缓存）");
+      eq(readVaultFile("Day课程/Day课程.md", vaultRoot), "容器自身的正文。\n", "容器正文按 folder-note 风格写进同名文件夹");
+      ok(fs.existsSync(path.join(vaultRoot, "Day课程", "子页面.md")), "子页仍拉进同名目录");
+      eq(readVaultFile("Day课程/子页面.md", vaultRoot), "子页面正文。\n", "子页内容");
+      ok(!fs.existsSync(path.join(vaultRoot, "空容器.md")), "空容器不应生成笔记文件");
+      ok(!fs.existsSync(path.join(vaultRoot, "Day课程.md")), "容器正文不该落在文件夹外");
+      eq(readVaultFile("空容器/空容器子页.md", vaultRoot), "空容器的子页正文。\n", "空容器的子页正常拉取");
+      eq(Object.keys(h.settings.state.docRecords).length, 4, "映射数量");
+      eq(Object.keys(h.settings.state.docEmptyContainers ?? {}).join("|"), empty.documentId, "空容器判定入缓存");
+      ok(h.settings.state.docEmptyContainers?.[empty.documentId] !== null, "外来空容器记的是时间戳而非 null");
+
+      // 第 2 轮：无改动 —— 空容器凭时间戳快路径跳过，不重复取回
+      const second = await runDocRound(h, "容器正文第 2 轮：无改动", "pull");
+      eq(second.result.plan.counts.skip ?? 0, 4, "全部 skip");
+      eq(second.delta.docsFetch, 0, "空容器时间戳没变，不再取回正文");
+      eq(second.delta.meta, 1, "仍走一次批量元数据");
+
+      // 第 3 轮：作者往空容器里写了正文
+      fake.setDocContent(empty.documentId, "<title>空容器</title>\n现在有正文了。\n");
+      const third = await runDocRound(h, "容器正文第 3 轮：空容器被补了正文", "pull");
+      eq(third.result.plan.counts["create-local"] ?? 0, 1, "只有空容器转正为 create-local");
+      eq(third.delta.docsFetch, 1, "时间戳变了才取回一次");
+      eq(readVaultFile("空容器/空容器.md", vaultRoot), "现在有正文了。\n", "补写的正文拉成本地笔记");
+      eq(Object.keys(h.settings.state.docEmptyContainers ?? {}).length, 0, "空判定已清除");
+      eq(Object.keys(h.settings.state.docRecords).length, 5, "映射数量");
+
+      return `容器正文拉成笔记+空容器目录化+补正文跟踪：第1轮 fetch=${first.delta.docsFetch}，第2轮 ${second.delta.docsFetch}，第3轮 ${third.delta.docsFetch}`;
+    } finally {
+      // 恢复文档模式主场景（dh/docFake）的全局 handler，不影响后续场景
+      __setRequestUrlHandler(docFake.handler);
+    }
+  });
+
+  await scenario("15c 文档模式：bookmark 转链接、附件收进同步根目录、重对齐不再误报带图冲突", async () => {
+    const fake = new FakeFeishu({ seedRootNode: false });
+    __setRequestUrlHandler(fake.handler);
+    try {
+      const imageToken = "AA22bb33cc44dd55ee66";
+      fake.media.set(imageToken, { bytes: PIXEL_PNG, fileName: "pic.png" });
+      fake.seedWikiDocument({
+        title: "带图文档",
+        content:
+          '<title>带图文档</title>\n看这篇文档：<bookmark name="Home - Docs by LangChain" href="https://docs.langchain.com/"></bookmark>\n\n![附图](https://feishu.cn/file/' +
+          imageToken +
+          ")\n",
+      });
+
+      const vaultRoot = path.join(TMP_ROOT, "vault-doc-align");
+      fs.mkdirSync(vaultRoot, { recursive: true });
+      const h = createDocHarness(fake, vaultRoot, { localFolder: "同步目录" });
+
+      // 第 1 轮：全新拉取
+      const first = await runDocRound(h, "对齐细节第 1 轮：全新拉取", "pull");
+      eq(first.result.plan.counts["create-local"] ?? 0, 1, "create-local 数量");
+      const text = readVaultFile("同步目录/带图文档.md", vaultRoot);
+      ok(text.includes("[Home - Docs by LangChain](https://docs.langchain.com/)"), `bookmark 应转成标准链接：${text}`);
+      ok(!text.includes("<bookmark"), "不应残留 bookmark 标签");
+      ok(text.includes("![[image-dd55ee66.png]]"), `图片应改写成本地引用：${text}`);
+      const imagePath = h.settings.state.images[imageToken]?.path;
+      eq(imagePath, "同步目录/attachments/image-dd55ee66.png", "附件应收进同步根目录下的 attachments");
+      ok(fs.existsSync(path.join(vaultRoot, "同步目录", "attachments", "image-dd55ee66.png")), "附件文件落盘位置");
+
+      // 第 2 轮：清掉映射与图片状态，模拟"重新对接"——带图文档不再误报冲突
+      h.settings.state.docRecords = {};
+      h.settings.state.images = {};
+      const second = await runDocRound(h, "对齐细节第 2 轮：清映射后重新对接", "pull");
+      eq(second.result.plan.counts.link ?? 0, 1, "图片按素材槽位归一后应判 link");
+      eq(second.result.plan.counts.conflict ?? 0, 0, "不再误报首次对接冲突");
+      eq(readVaultFile("同步目录/带图文档.md", vaultRoot), text, "重对齐不动本地内容");
+
+      return "bookmark→[标题](网址)；附件在 同步目录/attachments；清映射重对接 link=1、conflict=0";
+    } finally {
+      __setRequestUrlHandler(docFake.handler);
+    }
+  });
+
   await scenario("16 文档模式：无改动重跑（0 次写请求，全部 skip）", async () => {
     const { result, delta } = await runDocRound(dh, "文档模式第 2 轮：没有任何改动");
 
@@ -2436,7 +2584,7 @@ async function main(): Promise<void> {
       "source-format-diagnostics|image-ref-normalize|tab-indent-to-spaces|math-escape-hash|math-trim-inline-spaces|inline-formula-to-block|block-formula-own-paragraph|list-exit-after-hardbreak|native-math|footnote-downgrade|image-upload",
       "默认上行规则",
     );
-    eq(rules.toObsidian.map((rule) => rule.id).join("|"), "unescape-image-markup|drop-title-heading|restore-native-math|math-escape-hash|math-trim-inline-spaces|image-download|restore-image-ref", "默认下行规则");
+    eq(rules.toObsidian.map((rule) => rule.id).join("|"), "unescape-image-markup|drop-title-heading|bookmark-to-link|restore-native-math|math-escape-hash|math-trim-inline-spaces|image-download|restore-image-ref", "默认下行规则");
     ok(rules.toFeishu.every((rule) => Boolean(rule.description)), "每条规则都要有 description");
     for (const rule of rules.toFeishu) {
       if (rule.id === "image-ref-normalize") rule.enabled = false;
@@ -3651,6 +3799,89 @@ async function main(): Promise<void> {
     eq(fake.duplicateTitles.length, 0, "没有同名重复文档");
     return "已有 document_id 可恢复映射并原位更新";
   });
+
+  for (const mode of ["md", "doc"] as const) {
+    for (const folderMode of ["nodes", "flat"] as const) {
+      await scenario(`本地恢复与目录（${mode}/${folderMode}）：恢复最新版本且限定扫描范围`, async () => {
+        const fake = new FakeFeishu();
+        __setRequestUrlHandler(fake.handler);
+        const config = { rootNodeToken: ROOT_NODE, folderMode };
+        const makeHarness = (root: string, settings: Partial<PluginSettings> = {}) => mode === "doc"
+          ? createDocHarness(fake, root, { ...config, ...settings })
+          : createHarness(fake, { vaultRoot: root, settings: { ...config, ...settings } });
+        const seedRoot = path.join(TMP_ROOT, `restore-seed-${mode}-${folderMode}`);
+        writeDocVault(seedRoot, { "资料.md": "原始正文\n", "子目录/A.md": "子页面\n" });
+        const seed = makeHarness(seedRoot);
+        const seedRun = await seed.engine.run({ mode: "both" });
+        ok(seedRun.report.every(entry => entry.ok), "初始化远端成功");
+
+        const root = path.join(TMP_ROOT, `restore-local-${mode}-${folderMode}`);
+        writeDocVault(root, { "不要上传.md": "目录外私人笔记\n" });
+        const folder = "飞书__同步/资料";
+        const localPath = `${folder}/资料.md`;
+        const h = makeHarness(root, { localFolder: folder });
+        const writes = () => fake.counters.uploadAll + fake.counters.docsCreate + fake.counters.docsUpdate +
+          fake.counters.nodeCreate + fake.counters.move + fake.counters.deleteFile + fake.counters.mediaUpload;
+        const before = writes();
+        const preview = await h.engine.run({ mode: "both", dryRun: true });
+        eq(preview.plan.counts["create-local"], 2, "计划只拉取两篇");
+        eq(preview.plan.counts["create-remote"] ?? 0, 0, "目录外笔记不参与上传");
+        const initial = await h.engine.run({ mode: "pull" });
+        ok(initial.report.every(entry => entry.ok), "指定目录拉取成功");
+        eq(readVaultFile(localPath, root), "原始正文\n", "正文写入指定目录");
+        eq(readVaultFile(`${folder}/子目录/A.md`, root), "子页面\n", "保留子目录层级");
+        eq(fs.existsSync(path.join(root, "资料.md")), false, "不会平铺到 vault 根目录");
+
+        fs.unlinkSync(path.join(root, localPath));
+        const deleted = await h.engine.run({ mode: "pull", dryRun: true });
+        eq(deleted.plan.counts["local-deleted"], 1, "默认保留删除状态");
+        h.settings.restoreLocalDeleted = true;
+        h.settings.propagateLocalDelete = true; // 旧配置同时开启时也必须恢复，不能删除远端
+        let restored = await h.engine.run({ mode: "both" });
+        eq(restored.plan.counts["create-local"], 1, "未变远端可恢复");
+        ok(restored.report.every(entry => entry.ok), "恢复执行成功");
+        eq(readVaultFile(localPath, root), "原始正文\n", "恢复原正文");
+
+        fs.unlinkSync(path.join(root, localPath));
+        if (mode === "doc") fake.setDocContent(h.settings.state.docRecords[localPath].documentId, "<title>资料</title>\n远端最新正文\n");
+        else fake.editRemote("资料.md", "远端最新正文\n");
+        restored = await h.engine.run({ mode: "both" });
+        eq(restored.plan.counts["create-local"], 1, "远端改过也恢复");
+        ok(restored.report.every(entry => entry.ok), "恢复最新版本成功");
+        eq(readVaultFile(localPath, root), "远端最新正文\n", "最新正文已落盘");
+        eq(writes(), before, "拉取和恢复均未向远端写入");
+        eq(fake.counters.deleteFile, 0, "远端没有被删除");
+
+        const oldPreview = await h.engine.run({ mode: "pull", dryRun: true });
+        h.settings.localFolder = "第二份/飞书";
+        let rejected = false;
+        try { await h.engine.run({ mode: "pull", preApprovedPlan: oldPreview.plan }); }
+        catch (error) { rejected = String(error).includes("重新预览"); }
+        ok(rejected, "修改本地目录后旧计划失效");
+        const relocated = await h.engine.run({ mode: "pull" });
+        ok(relocated.report.every(entry => entry.ok), "改目录重新拉取成功");
+        eq(readVaultFile("第二份/飞书/资料.md", root), "远端最新正文\n", "新目录收到最新内容");
+        eq(readVaultFile(localPath, root), "远端最新正文\n", "旧文件留在原位置");
+        eq(writes(), before, "改目录拉取也没有远端写入");
+
+        // 新建本地笔记时，只把同步目录内部路径映射到远端。
+        writeVaultFile("第二份/飞书/飞书.md", "本地新笔记\n", root);
+        fs.mkdirSync(path.join(root, "第二份/飞书/新增"), { recursive: true });
+        writeVaultFile("第二份/飞书/新增/新笔记.md", "嵌套新笔记\n", root);
+        const nodeStart = fake.nodeCreations.length;
+        const pushed = await h.engine.run({ mode: "push" });
+        ok(pushed.report.every(entry => entry.ok), "指定目录上传成功");
+        eq(pushed.plan.counts["create-remote"], 2, "只上传目录中的新笔记");
+        const expectedTitle = mode === "doc" ? "飞书" : "飞书.md";
+        ok([...fake.nodes.values()].some(node => node.title === expectedTitle), "本地前缀不造成标题重命名");
+        const nestedTitle = `${folderMode === "flat" ? "新增__" : ""}新笔记${mode === "md" ? ".md" : ""}`;
+        ok([...fake.nodes.values()].some(node => node.title === nestedTitle), "远端标题去掉本地目录前缀");
+        ok(fake.nodeCreations.slice(nodeStart).every(node => !["第二份", "飞书"].includes(node.title)), "本地目标目录不建成远端容器");
+        eq(fake.unknownRoutes.length, 0, "端点均已覆盖");
+        return "缺失恢复、最新版本、目录切换与目录隔离通过；恢复时远端写入为零";
+      });
+    }
+  }
 
   // ---- 汇总
   const failures: string[] = scenarioResults.filter((item) => !item.ok).map((item) => `${item.name}：${item.detail}`);

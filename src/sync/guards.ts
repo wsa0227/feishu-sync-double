@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import type { App } from "obsidian";
 import { TFile } from "obsidian";
 import type { PluginSettings, SyncPlan, SyncModeSetting } from "./types";
-import { emptyState, summarize } from "./types";
+import { emptyState, normalizeLocalFolder, stripLocalFolder, summarize } from "./types";
 import type { SyncMode } from "./engine";
 import { assertSafeVaultPath } from "./scanner";
 import { walkWikiTree } from "../feishu/wiki";
@@ -28,6 +28,12 @@ export function validateSettings(settings: PluginSettings): void {
   if (settings.attachmentFolder.startsWith(".obsidian") || settings.attachmentFolder.startsWith(".trash")) {
     throw new Error("附件目录不能放在 .obsidian 或 .trash 中");
   }
+  settings.localFolder = normalizeLocalFolder(settings.localFolder);
+  if (settings.localFolder) assertSafeVaultPath(settings.localFolder);
+  if (settings.localFolder && (settings.localFolder === ".obsidian" || settings.localFolder.startsWith(".obsidian/") ||
+      settings.localFolder === ".trash" || settings.localFolder.startsWith(".trash/"))) {
+    throw new Error("本地同步目录不能放在 .obsidian 或 .trash 中");
+  }
   if (settings.folderMode === "flat" && (!settings.flatSeparator || /[\\/:\x00-\x1f]/.test(settings.flatSeparator))) {
     throw new Error("扁平分隔符不能为空，也不能包含路径分隔符");
   }
@@ -37,7 +43,7 @@ export function validateSettings(settings: PluginSettings): void {
 export function validateLocalPaths(paths: Iterable<string>, settings: PluginSettings): void {
   for (const path of paths) {
     assertSafeVaultPath(path);
-    if (settings.folderMode === "flat" && path.includes(settings.flatSeparator)) {
+    if (settings.folderMode === "flat" && stripLocalFolder(settings.localFolder, path).includes(settings.flatSeparator)) {
       throw new Error(`笔记路径包含扁平分隔符 ${settings.flatSeparator}，无法无歧义还原：${path}；请使用镜像目录模式`);
     }
   }
@@ -53,12 +59,15 @@ export function prepareTarget(settings: PluginSettings, spaceId: string, rootNod
   const previous = settings.state.target;
   const changed = !!previous && (previous.spaceId !== spaceId || previous.rootNodeToken !== rootNodeToken ||
     (previous.syncMode ?? "md") !== syncMode ||
+    (previous.includeRootPage ?? true) !== settings.includeRootPage ||
+    (previous.localFolder ?? "") !== settings.localFolder ||
     (previous.folderMode !== undefined && previous.folderMode !== settings.folderMode) ||
     (previous.flatSeparator !== undefined && previous.flatSeparator !== settings.flatSeparator) ||
     (previous.rootPageTitle !== undefined && previous.rootPageTitle !== settings.rootPageTitle));
   if (changed) settings.state = emptyState();
   settings.state.target = { spaceId, rootNodeToken, syncMode, folderMode: settings.folderMode,
-    flatSeparator: settings.flatSeparator, rootPageTitle: settings.rootPageTitle };
+    flatSeparator: settings.flatSeparator, rootPageTitle: settings.rootPageTitle, includeRootPage: settings.includeRootPage,
+    localFolder: settings.localFolder };
   return changed;
 }
 

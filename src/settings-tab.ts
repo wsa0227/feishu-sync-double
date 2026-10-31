@@ -3,7 +3,7 @@ import { FileSystemAdapter, FuzzySuggestModal, Notice, PluginSettingTab, Setting
 import type { AuthManager } from "./feishu/auth";
 import type { WikiSpace } from "./feishu/wiki";
 import type { Logger } from "./log";
-import { CONFLICT_DIR, emptyState } from "./sync/types";
+import { CONFLICT_DIR, emptyState, normalizeLocalFolder } from "./sync/types";
 import type { PluginSettings } from "./sync/types";
 import type { RunOptions, RunResult } from "./sync/engine";
 import { defaultRulesFile, loadRules, RULES_PATH, writeRulesFile } from "./convert/rules";
@@ -170,7 +170,7 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("飞书应用与授权").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
-      text: "需要一个飞书企业自建应用。默认授权范围：drive:drive、wiki:wiki、docx:document、docs:document.media:download、docs:document.media:upload；详见 README 的配置步骤。用「用户授权」时还要在开放平台登记下方重定向地址，并包含 offline_access 以自动续期。",
+      text: "需要一个飞书企业自建应用。默认授权范围：drive:drive、wiki:wiki、wiki:node:read、wiki:node:retrieve、docx:document、docs:document.media:download、docs:document.media:upload；详见 README 的配置步骤。用「用户授权」时还要在开放平台登记下方重定向地址，并包含 offline_access 以自动续期。",
     });
 
     new Setting(containerEl)
@@ -224,7 +224,7 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("授权范围")
-        .setDesc("空格分隔，必须都是应用已开通的权限；offline_access 用于自动续期")
+        .setDesc("空格分隔，必须都是应用已开通的权限；知识库公开链接需要 wiki:node:read 与 wiki:node:retrieve；offline_access 用于自动续期")
         .addText((text) =>
           text.setValue(settings.oauthScope).onChange(async (value) => {
             settings.oauthScope = value.trim();
@@ -295,7 +295,7 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("知识空间 space_id")
-      .setDesc("建议用「拉取列表」选择；手填时使用数字 space_id，不要粘贴 /wiki/ 页面链接")
+      .setDesc("推荐用「拉取列表」选择。若已填写可访问的 /wiki/ 根节点链接，运行同步时会自动解析并切换到该节点所属的知识空间")
       .addText((text) =>
         text.setValue(settings.spaceId).onChange(async (value) => {
           settings.spaceId = value.trim();
@@ -325,7 +325,7 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("同步根节点（可留空）")
       .setDesc(
-        "留空 = 以知识空间顶层为同步根：vault 的一级目录会变成知识库里的一级页面（vault 根目录下的散装笔记会放进下方那个顶层页面里）。填节点链接或 node_token 则所有内容都挂到该节点下面，飞书侧不会多出一个根页面。注意：留空时，知识库顶层已有的 .md 文件会被拉取到你的 vault 根目录。",
+        "留空 = 以知识空间顶层为同步根：vault 的一级目录会变成知识库里的一级页面（vault 根目录下的散装笔记会放进下方那个顶层页面里）。填节点链接或 node_token 则所有内容都挂到该节点下面，飞书侧不会多出一个根页面；文档模式可用下方开关把根页面正文拉取到本地。注意：留空时，知识库顶层已有的 .md 文件会被拉取到你的 vault 根目录。",
       )
       .addText((text) =>
         text.setValue(settings.rootNodeToken).onChange(async (value) => {
@@ -334,6 +334,29 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
           this.display();
         }),
       );
+
+    new Setting(containerEl)
+      .setName("本地同步目录（可留空）")
+      .setDesc("相对 vault 根目录填写，例如 飞书同步 或 文档/飞书；留空时直接放在 vault 根目录。切换此目录后会按新目录重新对接，不会移动旧文件。")
+      .addText((text) =>
+        text.setValue(settings.localFolder).onChange(async (value) => {
+          settings.localFolder = normalizeLocalFolder(value);
+          await this.host.saveSettings();
+        }),
+      );
+
+    if (settings.rootNodeToken.trim() && settings.syncMode === "doc") {
+      new Setting(containerEl)
+        .setName("拉取根页面正文")
+        .setDesc("开启后，填写的 /wiki/... 根页面本身也会拉取为同名 Markdown 笔记；关闭时只拉取根页面下面的子文档。")
+        .addToggle((toggle) =>
+          toggle.setValue(settings.includeRootPage).onChange(async (value) => {
+            settings.includeRootPage = value;
+            await this.host.saveSettings();
+            this.display();
+          }),
+        );
+    }
 
     if (!settings.rootNodeToken.trim()) {
       new Setting(containerEl)
@@ -424,6 +447,18 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("本地缺失时从远端恢复")
+      .setDesc("开启后，本地文件被删除而远端仍存在时，会生成“拉取新建”以恢复远端最新内容，可用“仅拉取”恢复。开启会关闭“本地删除后同时删除远端”。")
+      .addToggle((toggle) =>
+        toggle.setValue(settings.restoreLocalDeleted).onChange(async (value) => {
+          settings.restoreLocalDeleted = value;
+          if (value) settings.propagateLocalDelete = false;
+          await this.host.saveSettings();
+          this.display();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("文档模式：每轮取回全文校验")
       .setDesc(
         "关闭（默认）：先用飞书返回的「最后修改时间」（秒级）判断远端有没有变，没变就不取回全文，一轮只多一次批量元数据请求。" +
@@ -448,14 +483,16 @@ export class FeishuWikiSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("本地删除后同时删除远端")
       .setDesc(
-        "本地删掉的笔记，同步时把远端对应的文件/文档一起删掉（走云空间接口，删除进飞书回收站，可以恢复）。" +
+        "本地删掉的笔记，同步时把远端对应的文件/文档一起删掉（走云空间接口，删除进飞书回收站，可以恢复）。开启会关闭“本地缺失时从远端恢复”。" +
           "远端自上次同步后被改过、或该路径命中排除规则时，都不会删，仍然按冲突/忽略处理。" +
           "删除始终需要手动同步确认；定时同步只提示待删除项。",
       )
       .addToggle((toggle) =>
         toggle.setValue(settings.propagateLocalDelete).onChange(async (value) => {
           settings.propagateLocalDelete = value;
+          if (value) settings.restoreLocalDeleted = false;
           await this.host.saveSettings();
+          this.display();
         }),
       );
 

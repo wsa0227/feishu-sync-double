@@ -4,13 +4,13 @@ import type { AuthManager } from "../feishu/auth";
 import { FeishuClient } from "../feishu/client";
 import { fetchDocumentMarkdown } from "../feishu/docs";
 import { batchQueryMetas } from "../feishu/files";
-import type { WikiSpace } from "../feishu/wiki";
-import { listNodes, listSpaces, walkWikiTree } from "../feishu/wiki";
+import type { ResolvedWikiRoot, WikiSpace, WikiTreeEntry } from "../feishu/wiki";
+import { listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
 import type { Logger } from "../log";
 import type { ResolvedImage, RulesFile } from "../convert/rules";
 import { loadRules, normalizeRemoteImageUrls, publishRulesFingerprint, pullRulesFingerprint } from "../convert/rules";
 import type { DocPlanCache, DocRemoteIndex } from "./docPlanner";
-import { buildDocPlan, buildDocRemoteIndex, createDocPlanCache } from "./docPlanner";
+import { buildDocPlan, buildDocRemoteIndex, createDocPlanCache, pruneEmptyContainerNotes, resolveDocNotePathClashes } from "./docPlanner";
 import type { DocExecutionContext } from "./docExecutor";
 import { executeDocPlan, readLocalText } from "./docExecutor";
 import type { PlanDecision, RunOptions, RunResult } from "./engine";
@@ -19,7 +19,7 @@ import { sha256Hex } from "./hash";
 import type { ReportEntry } from "./executor";
 import { PathFilter, readLocalBytes, scanLocalNotes } from "./scanner";
 import type { LocalNote, PluginSettings, SyncPlan } from "./types";
-import { basenameOf, dirnameOf } from "./types";
+import { basenameOf, dirnameOf, stripLocalFolder } from "./types";
 
 export interface DocEngineDeps {
   app: App;
@@ -60,12 +60,30 @@ export class DocSyncEngine {
     const settings = this.deps.getSettings();
     const logger = this.deps.logger;
     validateSettings(settings);
-    const spaceId = parseTokenFromInput(settings.spaceId);
+    let spaceId = parseTokenFromInput(settings.spaceId);
     // 留空表示以知识空间顶层为同步根：vault 的一级目录会成为知识库的一级页面
-    const rootNodeToken = parseTokenFromInput(settings.rootNodeToken) || undefined;
-    if (!spaceId) throw new Error("请先在插件设置里填写知识库 space_id");
+    let rootNodeToken = parseTokenFromInput(settings.rootNodeToken) || undefined;
+    let resolvedRoot: ResolvedWikiRoot | undefined;
 
     const client = this.createClient();
+    if (rootNodeToken) {
+      resolvedRoot = await resolveWikiRoot(client, rootNodeToken);
+      if (resolvedRoot) {
+        if (spaceId !== resolvedRoot.spaceId) {
+          logger.info(`按根节点自动切换知识空间：${spaceId || "未设置"} -> ${resolvedRoot.spaceId}`);
+          spaceId = resolvedRoot.spaceId;
+          settings.spaceId = resolvedRoot.spaceId;
+          await this.deps.saveSettings();
+        }
+        if (rootNodeToken !== resolvedRoot.nodeToken) {
+          logger.info("根节点是快捷方式，已改用其原始知识库节点");
+          rootNodeToken = resolvedRoot.nodeToken;
+        }
+      } else {
+        logger.debug("根节点查询没有返回空间信息，继续使用设置里的 space_id");
+      }
+    }
+    if (!spaceId) throw new Error("请先在插件设置里填写知识库 space_id，或提供可访问的 /wiki/ 根节点链接");
     const filter = new PathFilter(settings.excludePatterns);
 
     if (options.preApprovedPlan) assertPlanCurrent(options.preApprovedPlan, settings);
@@ -100,12 +118,24 @@ export class DocSyncEngine {
       }
 
       options.onProgress?.("扫描本地笔记…");
-      const local: Map<string, LocalNote> = scanLocalNotes(this.deps.app, filter);
+      const local: Map<string, LocalNote> = scanLocalNotes(this.deps.app, filter, settings.localFolder);
       validateLocalPaths(local.keys(), settings);
 
       options.onProgress?.("读取飞书知识库节点树…");
+      const rootEntry: WikiTreeEntry | undefined = settings.includeRootPage && resolvedRoot && resolvedRoot.objType === "docx" && resolvedRoot.title
+        ? {
+            nodeToken: resolvedRoot.nodeToken,
+            objToken: resolvedRoot.objToken,
+            objType: resolvedRoot.objType,
+            parentNodeToken: resolvedRoot.parentNodeToken,
+            title: resolvedRoot.title,
+            relDir: "",
+            depth: 0,
+          }
+        : undefined;
       const entries = await walkWikiTree(client, spaceId, rootNodeToken, {
         rootContainerNode: settings.state.folders[""]?.nodeToken,
+        rootEntry,
         onProgress: (visited) => {
           if (visited % 50 === 0) options.onProgress?.(`读取飞书知识库节点树…（已见 ${visited} 个节点）`);
         },
@@ -116,9 +146,38 @@ export class DocSyncEngine {
         folderMode: settings.folderMode,
         flatSeparator: settings.flatSeparator,
         rootContainerNode: settings.state.folders[""]?.nodeToken,
+        rootDocumentNode: rootEntry?.nodeToken,
+        localFolder: settings.localFolder,
         isExcluded: (relPath) => filter.isExcluded(relPath),
       });
       if (index.warnings.length) throw new Error(`远端路径存在歧义，请先处理再同步：${index.warnings.join("；")}`);
+      // 二开：有子级的 docx 节点（容器）也可能是真文档。元数据批量把未映射容器一并查了，
+      // 再取回校验正文：空容器按目录处理（结果缓存到 state.docEmptyContainers），有正文的容器同时作为笔记参与同步。
+      const cache = createDocPlanCache();
+      const containerDocIds = [...index.notes.values()].filter((note) => note.containerUnverified).map((note) => note.documentId);
+      options.onProgress?.("读取远端文档元数据…");
+      const remoteModifiedTimes = settings.docVerifyRemoteByContent
+        ? new Map<string, string>()
+        : await this.batchDocumentModifyTimes(client, settings.state, containerDocIds);
+      if (remoteModifiedTimes.size === 0 && Object.keys(settings.state.docRecords).length > 0) {
+        logger.debug("文档模式：没拿到可用的远端修改时间，本轮退回逐篇取回校验");
+      }
+      if (settings.docVerifyRemoteByContent) {
+        logger.debug("文档模式：已打开「每轮取回全文校验」，本轮忽略修改时间戳");
+      }
+      if (containerDocIds.length > 0) {
+        options.onProgress?.("校验目录页面是否带正文…");
+        await pruneEmptyContainerNotes({
+          notes: index.notes,
+          state: settings.state,
+          modifyTimes: remoteModifiedTimes,
+          cache,
+          fetcher: (documentId) => this.fetchMarkdown(client, documentId),
+        });
+      }
+      // 空容器剔除后再做候选笔记的路径撞车消解（顺序不能反，见 resolveDocNotePathClashes）
+      const clashWarnings = resolveDocNotePathClashes(index.notes);
+      if (clashWarnings.length) throw new Error(`远端路径存在歧义，请先处理再同步：${clashWarnings.join("；")}`);
       // 认出目录节点就登记下来，后续轮次不必再靠结构推断，也不会重复建页面
       if (settings.folderMode === "nodes") {
         for (const [relDir, container] of index.containers) {
@@ -132,18 +191,6 @@ export class DocSyncEngine {
         `文档模式：远端识别到 ${index.notes.size} 篇文档、${index.containers.size} 个目录节点；本地 ${local.size} 篇笔记`,
       );
 
-      options.onProgress?.("读取远端文档元数据…");
-      const remoteModifiedTimes = settings.docVerifyRemoteByContent
-        ? new Map<string, string>()
-        : await this.batchDocumentModifyTimes(client, settings.state);
-      if (remoteModifiedTimes.size === 0 && Object.keys(settings.state.docRecords).length > 0) {
-        logger.debug("文档模式：没拿到可用的远端修改时间，本轮退回逐篇取回校验");
-      }
-      if (settings.docVerifyRemoteByContent) {
-        logger.debug("文档模式：已打开「每轮取回全文校验」，本轮忽略修改时间戳");
-      }
-
-      const cache = createDocPlanCache();
       const planned = await buildDocPlan({
         state: settings.state,
         local,
@@ -154,6 +201,7 @@ export class DocSyncEngine {
         recreateRemoteIfDeleted: settings.recreateRemoteIfDeleted,
         propagateLocalDelete: settings.propagateLocalDelete,
         propagateRemoteDelete: settings.propagateRemoteDelete,
+        restoreLocalDeleted: settings.restoreLocalDeleted,
         cache,
         forcePush: options.forcePush === true,
         remoteModifiedTimes,
@@ -240,14 +288,15 @@ export class DocSyncEngine {
 
     assertPlanCurrent(plan, context.settings);
     const cache = context.cache ?? createDocPlanCache();
-    const local: Map<string, LocalNote> = scanLocalNotes(this.deps.app, context.filter);
+    const local: Map<string, LocalNote> = scanLocalNotes(this.deps.app, context.filter, context.settings.localFolder);
     // 建文档时要避开与容器（目录页面）撞名：远端已认出的容器 + 状态里的目录 + 本地目录名
     const containerTitles = new Set<string>(context.index?.containerTitles ?? []);
     for (const relDir of Object.keys(context.settings.state.folders)) {
-      if (relDir) containerTitles.add(basenameOf(relDir));
+      const remoteDir = stripLocalFolder(context.settings.localFolder, relDir);
+      if (remoteDir) containerTitles.add(basenameOf(remoteDir));
     }
     for (const relPath of local.keys()) {
-      for (const segment of dirnameOf(relPath).split("/").filter(Boolean)) containerTitles.add(segment);
+      for (const segment of stripLocalFolder(context.settings.localFolder, dirnameOf(relPath)).split("/").filter(Boolean)) containerTitles.add(segment);
     }
 
     const execContext: DocExecutionContext = {
@@ -289,8 +338,11 @@ export class DocSyncEngine {
   private async batchDocumentModifyTimes(
     client: FeishuClient,
     state: { docRecords: Record<string, { documentId: string }> },
+    extraTokens: string[] = [],
   ): Promise<Map<string, string>> {
-    const tokens = Array.from(new Set(Object.values(state.docRecords).map((record) => record.documentId))).filter(Boolean);
+    const tokens = Array.from(
+      new Set([...Object.values(state.docRecords).map((record) => record.documentId), ...extraTokens]),
+    ).filter(Boolean);
     if (tokens.length === 0) return new Map();
     try {
       const metas = await batchQueryMetas(client, tokens, "docx");

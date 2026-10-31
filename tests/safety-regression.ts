@@ -6,8 +6,8 @@ import { AuthManager } from "../src/feishu/auth";
 import { listNodes, walkWikiTree } from "../src/feishu/wiki";
 import { uploadMarkdownToWiki } from "../src/feishu/files";
 import { PathFilter, assertSafeVaultPath } from "../src/sync/scanner";
-import { assertPlanCurrent, isEditorDirty, planFingerprint, prepareTarget, validateLocalPaths } from "../src/sync/guards";
-import { DEFAULT_SETTINGS, emptyState } from "../src/sync/types";
+import { assertPlanCurrent, isEditorDirty, planFingerprint, prepareTarget, validateLocalPaths, validateSettings } from "../src/sync/guards";
+import { DEFAULT_SETTINGS, emptyState, normalizeLocalFolder } from "../src/sync/types";
 import { Logger } from "../src/log";
 
 const logger = { debug() {}, info() {}, warn() {}, error() {} } as never;
@@ -154,4 +154,27 @@ test("depth limit aborts the entire scan", async () => {
   let index = 0;
   const client = { json: async () => ({ items: [{ node_token: `n${++index}`, obj_token: `d${index}`, obj_type: "docx", title: "nested", has_child: true }] }) };
   await assert.rejects(walkWikiTree(client as never, "space", undefined), /超过 20 层/);
+});
+
+test("local sync folder is vault relative; flat separators apply only to remote paths", () => {
+  const settings = { ...DEFAULT_SETTINGS, state: emptyState(), localFolder: "飞书__同步/资料", folderMode: "flat" as const };
+  validateSettings(settings);
+  validateLocalPaths(["飞书__同步/资料/子目录/A.md"], settings);
+  assert.throws(() => validateLocalPaths(["飞书__同步/资料/A__B.md"], settings));
+  assert.equal(normalizeLocalFolder(" 飞书\\资料/ "), "飞书/资料");
+  for (const localFolder of ["/absolute", "C:/outside", "../outside", ".obsidian/private", ".trash/notes"]) {
+    assert.throws(() => validateSettings({ ...settings, localFolder }));
+  }
+});
+
+test("changing local sync folder invalidates preview and resets mappings", () => {
+  const settings = { ...DEFAULT_SETTINGS, state: emptyState() };
+  prepareTarget(settings, "space", "root", "doc");
+  settings.state.folders["old"] = { nodeToken: "old-node" };
+  const plan = { settingsFingerprint: planFingerprint(settings) } as never;
+  settings.localFolder = "飞书/资料";
+  assert.throws(() => assertPlanCurrent(plan, settings), /重新预览/);
+  assert.ok(prepareTarget(settings, "space", "root", "doc"));
+  assert.deepEqual(settings.state.folders, {});
+  assert.equal(settings.state.target?.localFolder, "飞书/资料");
 });

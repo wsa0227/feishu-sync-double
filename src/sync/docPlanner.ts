@@ -1,9 +1,9 @@
 import { assertSafeVaultPath } from "./scanner";
 import type { RulesFile } from "../convert/rules";
-import { applyRules, publishRulesFingerprint, pullRulesFingerprint, ruleEnabled, sourceFormatWarnings } from "../convert/rules";
+import { applyRules, normalizeImagesForCompare, publishRulesFingerprint, pullRulesFingerprint, ruleEnabled, sourceFormatWarnings } from "../convert/rules";
 import type { WikiTreeEntry } from "../feishu/wiki";
 import type { LocalNote, PlanItem, SyncPlan, SyncState } from "./types";
-import { basenameOf, dirnameOf, joinPath, summarize } from "./types";
+import { basenameOf, dirnameOf, joinPath, prefixLocalPath, stripLocalFolder, summarize } from "./types";
 
 export interface DocRemoteNote {
   relPath: string;
@@ -11,6 +11,12 @@ export interface DocRemoteNote {
   nodeToken: string;
   parentNodeToken?: string;
   title: string;
+  /**
+   * 二开：该节点同时是目录容器（有子级），且映射表里没有它的既有记录。
+   * 它可能是"真文档挂子页面"（应作为笔记拉取），也可能是空目录页面（应跳过）。
+   * 计划期由 pruneEmptyContainerNotes 取回正文判定，空则从索引移除。
+   */
+  containerUnverified?: boolean;
 }
 
 export interface DocRemoteContainer {
@@ -34,17 +40,21 @@ export interface DocIndexOptions {
   folderMode: "nodes" | "flat";
   flatSeparator: string;
   rootContainerNode?: string;
+  /** 根节点正文作为笔记时，不能因为它有子节点而被识别成目录容器。 */
+  rootDocumentNode?: string;
+  /** vault 内的本地同步目录前缀。 */
+  localFolder?: string;
   isExcluded: (relPath: string) => boolean;
 }
 
 /** 笔记名去掉 .md；扁平模式把目录编码进标题，与 md 模式的远端文件名约定一致。 */
 export function documentTitleFor(
   relPath: string,
-  settings: { folderMode: "nodes" | "flat"; flatSeparator: string },
+  settings: { folderMode: "nodes" | "flat"; flatSeparator: string; localFolder?: string },
 ): string {
   const name = basenameOf(relPath).replace(/\.md$/i, "");
   if (settings.folderMode !== "flat") return name;
-  const dir = dirnameOf(relPath);
+  const dir = stripLocalFolder(settings.localFolder ?? "", dirnameOf(relPath));
   if (!dir) return name;
   return `${dir.split("/").join(settings.flatSeparator)}${settings.flatSeparator}${name}`;
 }
@@ -65,16 +75,19 @@ function illegalSegments(relPath: string): boolean {
   return relPath.split("/").some((segment) => segment === ".." || segment === "." || segment === "");
 }
 
-function deriveRelPath(entry: WikiTreeEntry, options: DocIndexOptions, warnings: string[]): string | undefined {
+function deriveRelPath(entry: WikiTreeEntry, options: DocIndexOptions, warnings: string[], containerDoc = false): string | undefined {
   if (options.folderMode === "flat") {
-    const relPath = `${entry.title.split(options.flatSeparator).join("/")}.md`;
+    const relPath = prefixLocalPath(options.localFolder ?? "", `${entry.title.split(options.flatSeparator).join("/")}.md`);
     if (illegalSegments(relPath)) {
       warnings.push(`远端标题里的路径片段非法，已跳过：${entry.title}`);
       return undefined;
     }
     return relPath;
   }
-  const relPath = joinPath(entry.relDir, `${entry.title.replace(/\.md$/i, "")}.md`);
+  // 二开（folder-note 风格）：容器文档（有子级的 docx）的正文放进与它同名的文件夹里——
+  // 文件夹 = 它的子页面，里面的同名 .md = 它自己的正文，树形与飞书一致。扁平模式没有目录概念，维持原样。
+  const baseDir = containerDoc ? joinPath(entry.relDir, entry.title) : entry.relDir;
+  const relPath = prefixLocalPath(options.localFolder ?? "", joinPath(baseDir, `${entry.title.replace(/\.md$/i, "")}.md`));
   if (illegalSegments(relPath)) {
     warnings.push(`远端标题包含非法路径片段，已跳过：${entry.title}`);
     return undefined;
@@ -100,14 +113,17 @@ export function buildDocRemoteIndex(options: DocIndexOptions): DocRemoteIndex {
   }
   for (const entry of options.entries) {
     if (entry.objType === "file") continue;
+    if (entry.nodeToken === options.rootDocumentNode) continue;
     if (containerTokens.has(entry.nodeToken) || parentTokens.has(entry.nodeToken)) containerTokens.add(entry.nodeToken);
   }
 
   const containers = new Map<string, DocRemoteContainer>();
   const containerTitles = new Set<string>();
   for (const entry of options.entries) {
+    if (entry.nodeToken === options.rootDocumentNode) continue;
     if (!containerTokens.has(entry.nodeToken)) continue;
-    const relDir = entry.nodeToken === options.rootContainerNode ? "" : joinPath(entry.relDir, entry.title);
+    const remoteRelDir = entry.nodeToken === options.rootContainerNode ? "" : joinPath(entry.relDir, entry.title);
+    const relDir = prefixLocalPath(options.localFolder ?? "", remoteRelDir);
     if (options.folderMode === "nodes" && !containers.has(relDir)) {
       containers.set(relDir, { nodeToken: entry.nodeToken, title: entry.title, parentNodeToken: entry.parentNodeToken });
     }
@@ -120,35 +136,127 @@ export function buildDocRemoteIndex(options: DocIndexOptions): DocRemoteIndex {
   }
 
   const notes = new Map<string, DocRemoteNote>();
-  const seenPaths = new Map<string, string>();
   for (const entry of options.entries) {
-    if (entry.objType !== "docx" || (containerTokens.has(entry.nodeToken) && !knownDocumentPaths.has(entry.objToken))) continue;
-    const relPath = knownDocumentPaths.get(entry.objToken) ?? deriveRelPath(entry, options, warnings);
+    if (entry.objType !== "docx") continue;
+    // 二开：容器节点也可能是"真文档挂子页面"。没有既有映射的容器先带标记进候选，
+    // 由 pruneEmptyContainerNotes 在计划期取回正文判定；有映射的容器照旧直接作为笔记。
+    const isContainerDoc = containerTokens.has(entry.nodeToken) && entry.nodeToken !== options.rootDocumentNode;
+    const containerUnverified = isContainerDoc && !knownDocumentPaths.has(entry.objToken);
+    const relPath = knownDocumentPaths.get(entry.objToken) ?? deriveRelPath(entry, options, warnings, isContainerDoc);
     if (!relPath) continue;
     assertSafeVaultPath(relPath);
     if (options.isExcluded(relPath)) continue;
-    // macOS / Windows 的大小写不敏感与 NFC/NFD 差异会让两个不同标题落到同一个物理文件上
-    const normalized = relPath.normalize("NFC").toLowerCase();
-    const clash = seenPaths.get(normalized);
-    if (clash === relPath) {
-      warnings.push(`远端存在多个同名文档，只处理其中一个：${relPath}`);
-      continue;
-    }
-    if (clash && clash !== relPath) {
-      warnings.push(`远端存在仅大小写或 Unicode 形式不同的同名文档，已跳过其中一个：${relPath}（与 ${clash} 冲突）`);
-      continue;
-    }
-    seenPaths.set(normalized, relPath);
-    notes.set(relPath, {
+    const note: DocRemoteNote = {
       relPath,
       documentId: entry.objToken,
       nodeToken: entry.nodeToken,
       parentNodeToken: entry.parentNodeToken,
       title: entry.title,
-    });
+    };
+    if (containerUnverified) note.containerUnverified = true;
+    notes.set(relPath, note);
   }
 
   return { notes, containers, containerTitles, warnings };
+}
+
+/**
+ * 二开：候选笔记的路径撞车消解（macOS / Windows 的大小写不敏感与 NFC/NFD 差异会让两个不同标题
+ * 落到同一个物理文件上）。必须在 pruneEmptyContainerNotes 之后调用——空容器尚未剔除时，
+ * "目录与笔记同名"（容器被剔重、笔记走既有映射）会被误判成远端歧义。
+ * 同一路径多个候选时先到先得，其余计入 warnings。
+ */
+export function resolveDocNotePathClashes(notes: Map<string, DocRemoteNote>): string[] {
+  const warnings: string[] = [];
+  const seenPaths = new Map<string, string>();
+  for (const note of [...notes.values()]) {
+    const normalized = note.relPath.normalize("NFC").toLowerCase();
+    const clash = seenPaths.get(normalized);
+    if (clash === undefined) {
+      seenPaths.set(normalized, note.relPath);
+      continue;
+    }
+    notes.delete(note.relPath);
+    if (clash === note.relPath) {
+      warnings.push(`远端存在多个同名文档，只处理其中一个：${note.relPath}`);
+    } else {
+      warnings.push(`远端存在仅大小写或 Unicode 形式不同的同名文档，已跳过其中一个：${note.relPath}（与 ${clash} 冲突）`);
+    }
+  }
+  return warnings;
+}
+
+/**
+ * docs_ai 取回的 Markdown 两种形态都可能出现：真实接口把标题放在最前面的 <title> 标签里，
+ * 部分转换（含测试假服务器）会把标题取回成首行 H1。去掉标题后没有正文即视为空文档。
+ * H1 只有在与文档标题完全一致时才剥离，避免误伤正文恰好以同名 H1 开头的文档。
+ */
+export function isEmptyDocumentMarkdown(text: string, title?: string): boolean {
+  const body = text.replace(/<title>[\s\S]*?<\/title>/g, "").trim();
+  if (body.length === 0) return true;
+  if (title) {
+    const first = body.split("\n", 1)[0] ?? "";
+    const heading = /^#\s+(.*?)\s*$/.exec(first);
+    if (heading && heading[1] === title.trim()) {
+      const rest = body
+        .split("\n")
+        .slice(1)
+        .join("\n")
+        .trim();
+      if (rest.length === 0) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 二开：校验"容器文档"的正文，把空目录页面从候选笔记里移除。
+ * - 判定结果缓存在 state.docEmptyContainers（documentId → 判定时的 latest_modify_time）：
+ *   已知空容器只要元数据时间戳没变，本轮不再取回正文；
+ *   时间戳变了（比如别人后来往空目录页面里写了内容）会重新取回，正文非空时转正为笔记。
+ * - 取回走共享的计划缓存，与后续 buildDocPlan / 执行期不重复请求。
+ * - 取回失败时按现有计划期语义直接抛错终止本轮同步，不做静默猜测。
+ */
+export async function pruneEmptyContainerNotes(options: {
+  notes: Map<string, DocRemoteNote>;
+  state: SyncState;
+  modifyTimes: Map<string, string>;
+  cache: DocPlanCache;
+  fetcher: (documentId: string) => Promise<string>;
+}): Promise<void> {
+  const { notes, state, modifyTimes, cache, fetcher } = options;
+  for (const note of [...notes.values()]) {
+    if (!note.containerUnverified) continue;
+    const cachedTime = state.docEmptyContainers?.[note.documentId];
+    const currentTime = modifyTimes.get(note.documentId);
+    if (cachedTime !== undefined && currentTime !== undefined && cachedTime === currentTime) {
+      // 已判定为空且时间戳没变：仍按目录处理
+      notes.delete(note.relPath);
+      continue;
+    }
+    if (cachedTime === null) {
+      // 插件自己创建的空目录页面：永久按目录处理
+      notes.delete(note.relPath);
+      continue;
+    }
+    let fetched = cache.fetched.get(note.documentId);
+    if (fetched === undefined) {
+      fetched = await fetcher(note.documentId);
+      cache.fetched.set(note.documentId, fetched);
+      cache.fetchCount += 1;
+    }
+    if (isEmptyDocumentMarkdown(fetched, note.title)) {
+      if (currentTime !== undefined) {
+        state.docEmptyContainers ??= {};
+        state.docEmptyContainers[note.documentId] = currentTime;
+      }
+      notes.delete(note.relPath);
+    } else {
+      // 有正文（或从空变成了有正文）：转正为普通笔记参与同步，清掉过期的空判定
+      if (state.docEmptyContainers) delete state.docEmptyContainers[note.documentId];
+      delete note.containerUnverified;
+    }
+  }
 }
 
 export interface DocPlanCache {
@@ -175,7 +283,7 @@ export interface DocPlannerInput {
   state: SyncState;
   local: Map<string, LocalNote>;
   remote: DocRemoteIndex;
-  settings: { folderMode: "nodes" | "flat"; flatSeparator: string };
+  settings: { folderMode: "nodes" | "flat"; flatSeparator: string; localFolder?: string };
   rules: RulesFile;
   isExcluded: (relPath: string) => boolean;
   readLocal: (relPath: string) => Promise<string>;
@@ -186,6 +294,7 @@ export interface DocPlannerInput {
   recreateRemoteIfDeleted: boolean;
   propagateLocalDelete: boolean;
   propagateRemoteDelete: boolean;
+  restoreLocalDeleted: boolean;
   cache: DocPlanCache;
   /** 文档 id → 飞书返回的最后修改时间（Unix 秒字符串），接口失败时为空 Map */
   remoteModifiedTimes: Map<string, string>;
@@ -349,7 +458,9 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
           fetchedHash(input, remoteNote.documentId),
         ]);
         const extra = { ...remoteFields, localHash, remoteHash: hash, localSize: localNote.size, localMtime: localNote.mtime };
-        if (pulled === localText) {
+        // 二开：计划期拿不到"图片已下载后的本地链接形态"，带图文档会和执行器写出的本地文件
+        // 只有图片引用不同——按素材槽位归一后再比较，避免首次对接误报冲突。
+        if (pulled === localText || normalizeImagesForCompare(pulled) === normalizeImagesForCompare(localText)) {
           items.push(item(relPath, "link", "两边内容一致，只建立映射", extra));
         } else {
           items.push(conflictItem(relPath, state, "首次对接：同名文档两边内容不同，已保留双方", extra, localHash, hash));
@@ -378,6 +489,10 @@ export async function buildDocPlan(input: DocPlannerInput): Promise<SyncPlan> {
     }
 
     if (!localNote) {
+      if (input.restoreLocalDeleted) {
+        items.push(item(relPath, "create-local", "本地已删除，按设置从远端恢复最新内容", remoteFields));
+        continue;
+      }
       const remoteState = await remoteChangedState(input, record, remoteNote!.documentId);
       const hash = remoteState.hash ?? record.baseRemoteHash;
       const stamp = remoteState.metaTime ? { remoteModifiedTime: remoteState.metaTime } : {};

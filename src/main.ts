@@ -8,7 +8,7 @@ import type { PlanDecision, SyncMode } from "./sync/engine";
 import { SyncEngine } from "./sync/engine";
 import { DocSyncEngine } from "./sync/docEngine";
 import type { PluginSettings, SyncAction, SyncState } from "./sync/types";
-import { DEFAULT_SETTINGS } from "./sync/types";
+import { DEFAULT_SETTINGS, ensureOAuthScopes } from "./sync/types";
 import { AuthCodeModal } from "./ui/auth-modal";
 import { PlanModal } from "./ui/plan-modal";
 import { ReportModal } from "./ui/report-modal";
@@ -105,9 +105,12 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
   async loadSettings(): Promise<void> {
     const raw = (await this.loadData()) as (Partial<PluginSettings> & { state?: Partial<SyncState> }) | null;
     const state: Partial<SyncState> = raw?.state ?? {};
+    const rawScope = typeof raw?.oauthScope === "string" ? raw.oauthScope : DEFAULT_SETTINGS.oauthScope;
+    const oauthScope = ensureOAuthScopes(rawScope);
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...(raw ?? {}),
+      oauthScope,
       state: {
         records: state.records ?? {},
         folders: state.folders ?? {},
@@ -119,6 +122,12 @@ export default class FeishuWikiSyncPlugin extends Plugin implements SettingsHost
         lastSyncAt: state.lastSyncAt,
       },
     };
+    // 旧版 token 不会因为设置字符串变化而自动获得新权限。
+    // 自动补齐范围并清除旧用户授权，避免后续同步继续使用无权限 token。
+    if (oauthScope !== rawScope && this.settings.authMode === "user" && this.settings.userTokens) {
+      this.settings.userTokens = undefined;
+    }
+    if (oauthScope !== rawScope || !raw) await this.saveSettings();
   }
 
   isSyncBusy(): boolean {

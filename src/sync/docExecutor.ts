@@ -24,7 +24,7 @@ import { documentTitleFor, uniqueDocumentTitle } from "./docPlanner";
 import type { ReportEntry } from "./executor";
 import { localStat, writeLocalBytes } from "./scanner";
 import type { PluginSettings, SyncPlan, SyncState } from "./types";
-import { CONFLICT_DIR, basenameOf, dirnameOf } from "./types";
+import { CONFLICT_DIR, basenameOf, dirnameOf, prefixLocalPath, stripLocalFolder } from "./types";
 
 export interface DocExecutionContext {
   app: App;
@@ -91,6 +91,13 @@ export async function executeDocPlan(
   const folderNodes = new Map<string, string>();
   let rootContainerToken: string | undefined;
 
+  /** 二开：新建的目录节点是空文档，记入空容器名单（null = 永久按目录处理），计划期不再取回校验。 */
+  const markEmptyContainer = (node: { obj_token?: string } | undefined): void => {
+    if (!node?.obj_token) return;
+    state.docEmptyContainers ??= {};
+    state.docEmptyContainers[node.obj_token] = null;
+  };
+
   /** 笔记必须挂在某个页面节点下；未指定同步根节点时，在空间顶层按需建一个页面存放 vault 根目录下的笔记。 */
   const ensureRootContainer = async (): Promise<string> => {
     if (ctx.rootNodeToken) return ctx.rootNodeToken;
@@ -110,6 +117,7 @@ export async function executeDocPlan(
       return rootContainerToken;
     }
     const node = await createContainerNode(ctx.client, ctx.spaceId, undefined, title);
+    markEmptyContainer(node);
     state.folders[""] = { nodeToken: node.node_token };
     rootContainerToken = node.node_token;
     ctx.logger.info(`在知识库顶层创建页面「${title}」存放 vault 根目录下的笔记`);
@@ -117,8 +125,9 @@ export async function executeDocPlan(
   };
 
   const resolveFolderNode = async (relDir: string, needNoteParent: boolean): Promise<string | undefined> => {
+    const remoteRelDir = stripLocalFolder(settings.localFolder, relDir);
     // needNoteParent=false 只用于建目录节点：未指定根节点时目录直接挂空间顶层
-    if (settings.folderMode === "flat" || relDir === "") {
+    if (settings.folderMode === "flat" || remoteRelDir === "") {
       return needNoteParent ? ensureRootContainer() : ctx.rootNodeToken;
     }
     const cached = folderNodes.get(relDir);
@@ -131,6 +140,7 @@ export async function executeDocPlan(
     const parentDir = dirnameOf(relDir);
     const parentNode = await resolveFolderNode(parentDir, false);
     const node = await createContainerNode(ctx.client, ctx.spaceId, parentNode, basenameOf(relDir));
+    markEmptyContainer(node);
     state.folders[relDir] = { nodeToken: node.node_token, parentNodeToken: parentNode };
     folderNodes.set(relDir, node.node_token);
     ctx.logger.info(`创建知识库目录节点 ${relDir} -> ${node.node_token}`);
@@ -846,7 +856,12 @@ async function downloadRemoteImage(
       ctx.logger.debug(`远端图片 ${options.token} 与本地已有文件内容一致，复用 ${known}`);
       return known;
     }
-    const folder = ctx.settings.attachmentFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    // 二开：附件目录挂在本次同步的根目录（localFolder）下，例如 飞书同步/RAG智能体开发/attachments，
+    // 而不是 vault 根目录；未设置 localFolder 时行为不变。
+    const folder = prefixLocalPath(
+      ctx.settings.localFolder ?? "",
+      ctx.settings.attachmentFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""),
+    );
     const ext = extensionFor(downloaded.contentType, options.url, options.alt);
     const name = attachmentName(options.token, options.alt, ext);
     const path = await resolveAttachmentPath(ctx, folder, name, downloaded.bytes);

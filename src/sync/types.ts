@@ -133,6 +133,10 @@ export interface SyncTarget {
   rootNodeToken: string;
   /** 上次同步用的模式，用于发现模式切换后重按「首次对接」判定 */
   syncMode?: SyncModeSetting;
+  /** 文档模式是否把填写的根节点正文也作为一篇笔记拉取 */
+  includeRootPage?: boolean;
+  /** vault 内的本地同步目录，空字符串表示 vault 根目录 */
+  localFolder?: string;
   folderMode?: "nodes" | "flat";
   flatSeparator?: string;
   rootPageTitle?: string;
@@ -147,6 +151,12 @@ export interface SyncState {
   images: Record<string, ImageDownloadRecord>;
   /** 图片内容哈希 + 文档 id → 已上传素材（文档模式上行复用） */
   imageUploads: Record<string, ImageUploadRecord>;
+  /**
+   * 文档模式：已知"正文为空"的容器文档（有子级、但自身没有正文的目录页面）。
+   * documentId → 判定为空时的 latest_modify_time，时间戳变了就重新取回校验；
+   * null = 插件自己创建的空目录页面，永久按目录处理，不参与取回校验。
+   */
+  docEmptyContainers?: Record<string, string | null>;
   target?: SyncTarget;
   lastSyncAt?: number;
 }
@@ -167,6 +177,12 @@ export interface PluginSettings {
   spaceId: string;
   rootNodeToken: string;
   rootPageTitle: string;
+  /** 文档模式：把填写的根节点正文作为一篇同名 Markdown 笔记拉取 */
+  includeRootPage: boolean;
+  /** vault 内的本地同步目录，空字符串表示 vault 根目录 */
+  localFolder: string;
+  /** 本地文件缺失且远端仍存在时，是否允许拉取最新版本恢复 */
+  restoreLocalDeleted: boolean;
   /** md：把笔记当原生 Markdown 文件镜像；doc：把笔记同步成飞书新版文档 */
   syncMode: SyncModeSetting;
   folderMode: "nodes" | "flat";
@@ -189,17 +205,34 @@ export interface PluginSettings {
   state: SyncState;
 }
 
+/**
+ * 读取知识库节点并解析公开 /wiki/<token> 链接所需的用户权限。
+ * 这两个权限不会由旧版的 wiki:wiki 范围自动替代，必须随 OAuth 请求显式申请。
+ */
+export const REQUIRED_OAUTH_SCOPES = ["wiki:node:read", "wiki:node:retrieve"] as const;
+
+export function ensureOAuthScopes(scope: string): string {
+  const scopes = scope.split(/\s+/).filter(Boolean);
+  for (const required of REQUIRED_OAUTH_SCOPES) {
+    if (!scopes.includes(required)) scopes.push(required);
+  }
+  return scopes.join(" ");
+}
+
 export const CONFLICT_DIR = ".obsidian/feishu-sync/conflicts";
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   authMode: "user",
   appId: "",
   appSecret: "",
-  oauthScope: "drive:drive wiki:wiki docs:document.media:download docs:document.media:upload docx:document offline_access",
+  oauthScope: ensureOAuthScopes("drive:drive wiki:wiki docs:document.media:download docs:document.media:upload docx:document offline_access"),
   redirectUri: "http://localhost:7634/callback",
   spaceId: "",
   rootNodeToken: "",
   rootPageTitle: "",
+  includeRootPage: true,
+  localFolder: "",
+  restoreLocalDeleted: false,
   syncMode: "md",
   folderMode: "nodes",
   flatSeparator: "__",
@@ -248,4 +281,21 @@ export function basenameOf(relPath: string): string {
 
 export function joinPath(dir: string, name: string): string {
   return dir ? `${dir}/${name}` : name;
+}
+
+export function normalizeLocalFolder(folder: string): string {
+  return folder.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+}
+
+export function prefixLocalPath(folder: string, relPath: string): string {
+  const prefix = normalizeLocalFolder(folder);
+  return prefix ? joinPath(prefix, relPath) : relPath;
+}
+
+export function stripLocalFolder(folder: string, relPath: string): string {
+  const prefix = normalizeLocalFolder(folder);
+  if (!prefix) return relPath;
+  if (relPath === prefix) return "";
+  const marker = `${prefix}/`;
+  return relPath.startsWith(marker) ? relPath.slice(marker.length) : relPath;
 }

@@ -57,9 +57,11 @@ export class PathFilter {
   }
 }
 
-export function scanLocalNotes(app: App, filter: PathFilter): Map<string, LocalNote> {
+export function scanLocalNotes(app: App, filter: PathFilter, localFolder = ""): Map<string, LocalNote> {
   const notes = new Map<string, LocalNote>();
+  const prefix = localFolder ? `${localFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")}/` : "";
   for (const file of app.vault.getMarkdownFiles()) {
+    if (prefix && !file.path.startsWith(prefix)) continue;
     if (filter.isExcluded(file.path)) continue;
     const stat = file.stat;
     notes.set(file.path, { relPath: file.path, size: stat?.size ?? 0, mtime: stat?.mtime ?? 0 });

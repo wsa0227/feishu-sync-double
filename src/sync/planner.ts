@@ -11,6 +11,7 @@ export interface PlannerInput {
   recreateRemoteIfDeleted: boolean;
   propagateLocalDelete: boolean;
   propagateRemoteDelete: boolean;
+  restoreLocalDeleted: boolean;
 }
 
 function item(relPath: string, action: PlanItem["action"], reason?: string, extra: Partial<PlanItem> = {}): PlanItem {
@@ -97,6 +98,10 @@ export async function buildPlan(input: PlannerInput): Promise<SyncPlan> {
     if (!localNote) {
       if (!remoteNote) {
         items.push(item(relPath, "forget", "两边都已不存在，清理映射"));
+        continue;
+      }
+      if (input.restoreLocalDeleted) {
+        items.push(item(relPath, "create-local", "本地已删除，按设置从远端恢复最新内容", remoteFields(remoteNote)));
         continue;
       }
       const remoteState = await checkRemoteChanged(input, record, remoteNote);

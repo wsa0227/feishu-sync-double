@@ -4,7 +4,7 @@ import type { AuthManager } from "../feishu/auth";
 import { FeishuClient } from "../feishu/client";
 import { batchQueryMetas, downloadFile } from "../feishu/files";
 import type { WikiSpace } from "../feishu/wiki";
-import { listNodes, listSpaces, walkWikiTree } from "../feishu/wiki";
+import { listNodes, listSpaces, resolveWikiRoot, walkWikiTree } from "../feishu/wiki";
 import type { Logger } from "../log";
 import type { ReportEntry } from "./executor";
 import { executePlan } from "./executor";
@@ -12,7 +12,7 @@ import { sha256Hex } from "./hash";
 import { buildPlan } from "./planner";
 import { PathFilter, assertSafeVaultPath, readLocalBytes, scanLocalNotes } from "./scanner";
 import type { LocalNote, PluginSettings, RemoteNote, SyncPlan } from "./types";
-import { joinPath } from "./types";
+import { joinPath, prefixLocalPath } from "./types";
 
 export type SyncMode = "both" | "pull" | "push";
 export type PlanDecision = "all" | "pull-only" | "cancel";
@@ -87,13 +87,30 @@ export class SyncEngine {
   private async runInternal(options: RunOptions): Promise<RunResult> {
     const settings = this.deps.getSettings();
     validateSettings(settings);
-    const spaceId = parseTokenFromInput(settings.spaceId);
+    let spaceId = parseTokenFromInput(settings.spaceId);
     // 留空表示以知识空间顶层为同步根：vault 的一级目录会成为知识库的一级页面
-    const rootNodeToken = parseTokenFromInput(settings.rootNodeToken) || undefined;
-    if (!spaceId) throw new Error("请先在插件设置里填写知识库 space_id");
+    let rootNodeToken = parseTokenFromInput(settings.rootNodeToken) || undefined;
 
     const client = this.createClient();
     const logger = this.deps.logger;
+    if (rootNodeToken) {
+      const resolved = await resolveWikiRoot(client, rootNodeToken);
+      if (resolved) {
+        if (spaceId !== resolved.spaceId) {
+          logger.info(`按根节点自动切换知识空间：${spaceId || "未设置"} -> ${resolved.spaceId}`);
+          spaceId = resolved.spaceId;
+          settings.spaceId = resolved.spaceId;
+          await this.deps.saveSettings();
+        }
+        if (rootNodeToken !== resolved.nodeToken) {
+          logger.info("根节点是快捷方式，已改用其原始知识库节点");
+          rootNodeToken = resolved.nodeToken;
+        }
+      } else {
+        logger.debug("根节点查询没有返回空间信息，继续使用设置里的 space_id");
+      }
+    }
+    if (!spaceId) throw new Error("请先在插件设置里填写知识库 space_id，或提供可访问的 /wiki/ 根节点链接");
     const filter = new PathFilter(settings.excludePatterns);
 
     if (options.preApprovedPlan) assertPlanCurrent(options.preApprovedPlan, settings);
@@ -124,8 +141,8 @@ export class SyncEngine {
         }
 
         options.onProgress?.("扫描本地笔记…");
-        const local: Map<string, LocalNote> = scanLocalNotes(this.deps.app, filter);
-      validateLocalPaths(local.keys(), settings);
+        const local: Map<string, LocalNote> = scanLocalNotes(this.deps.app, filter, settings.localFolder);
+        validateLocalPaths(local.keys(), settings);
 
         options.onProgress?.("读取飞书知识库节点树…");
         const tree = await walkWikiTree(client, spaceId, rootNodeToken, {
@@ -141,7 +158,8 @@ export class SyncEngine {
           if (entry.relDir && filter.isExcluded(entry.relDir)) continue;
 
           const raw = joinPath(entry.relDir, entry.title);
-          const relPath = settings.folderMode === "flat" ? raw.split(settings.flatSeparator).join("/") : raw;
+          const remoteRelPath = settings.folderMode === "flat" ? raw.split(settings.flatSeparator).join("/") : raw;
+          const relPath = prefixLocalPath(settings.localFolder, remoteRelPath);
           if (filter.isExcluded(relPath)) continue;
           assertSafeVaultPath(relPath);
 
@@ -190,6 +208,7 @@ export class SyncEngine {
           recreateRemoteIfDeleted: settings.recreateRemoteIfDeleted,
           propagateLocalDelete: settings.propagateLocalDelete,
           propagateRemoteDelete: settings.propagateRemoteDelete,
+          restoreLocalDeleted: settings.restoreLocalDeleted,
           hashLocal: async (relPath) => {
             const cached = localHashCache.get(relPath);
             if (cached) return cached;

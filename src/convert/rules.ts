@@ -324,6 +324,22 @@ const restoreImageRef: BuiltInRule = {
   apply: (input) => input,
 };
 
+const bookmarkToLink: BuiltInRule = {
+  id: "bookmark-to-link",
+  description:
+    "下行：把飞书的 bookmark 网页书签块转成标准 Markdown 链接 [标题](网址)——直接写回本地会残留 <bookmark …> 标签，Obsidian 里显示成一段坏代码。没有标题时用网址本身；没有 href 的书签保持原样。",
+  defaultEnabled: true,
+  apply: (input) =>
+    mapOutsideFences(input, (line) =>
+      line.replace(/<bookmark\b([^>]*?)(?:\/>|><\/bookmark\s*>)/gi, (raw, attrs: string) => {
+        const href = decodeXmlText(/(?:\bhref\s*=\s*)["']([^"']*)["']/i.exec(attrs)?.[1] ?? "").trim();
+        if (!href) return raw;
+        const name = decodeXmlText(/(?:\bname\s*=\s*)["']([^"']*)["']/i.exec(attrs)?.[1] ?? "").trim();
+        return `[${name || href}](${href})`;
+      }),
+    ),
+};
+
 function escapeXmlAttr(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&#34;");
 }
@@ -445,6 +461,26 @@ export function normalizeRemoteImageUrls(content: string): string {
   return out;
 }
 
+/**
+ * 二开：首次对接比较用。把两种图片引用都归一到"素材槽位"再比：
+ * - 远端取回形态 `![](…/file/<token>)` → `{{img:<token 尾 8 位>}}`
+ * - 本地已下载形态 `![[image-<尾 8 位>.<ext>]]` → 同一槽位（对应 attachmentName 的命名约定）
+ * 计划期拿不到图片下载结果，直接逐字节比较会把"只有图片链接形态不同"的相同内容判成冲突。
+ * 本地命名不符合约定的引用保持原样 → 归一后不一致 → 仍判冲突（宁严勿漏）。
+ */
+export function normalizeImagesForCompare(content: string): string {
+  const slot = (token: string): string => `{{img:${token.slice(-8)}}}`;
+  return content
+    .replace(MARKDOWN_IMAGE, (raw: string, _alt: string, url: string) => {
+      const token = extractMediaToken(url);
+      return token ? slot(token) : raw;
+    })
+    .replace(WIKI_IMAGE, (raw: string, linkpath: string) => {
+      const match = /(?:^|\/)image-([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$/i.exec(linkpath.trim());
+      return match ? slot(match[1]) : raw;
+    });
+}
+
 const unescapeImageMarkup: BuiltInRule = {
   id: "unescape-image-markup",
   description:
@@ -489,7 +525,7 @@ export const BUILT_IN_RULES: Record<RuleDirection, BuiltInRule[]> = {
     footnoteDowngrade,
     imageUpload,
   ],
-  toObsidian: [unescapeImageMarkup, dropTitleHeading, restoreNativeMath, mathEscapeHash, mathTrimInlineSpaces, imageDownload, restoreImageRef],
+  toObsidian: [unescapeImageMarkup, dropTitleHeading, bookmarkToLink, restoreNativeMath, mathEscapeHash, mathTrimInlineSpaces, imageDownload, restoreImageRef],
 };
 
 function entryOf(rule: BuiltInRule): RuleEntry {

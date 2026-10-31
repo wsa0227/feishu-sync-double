@@ -17,6 +17,7 @@ export interface WikiNode {
   parent_node_token?: string;
   node_type?: string;
   origin_node_token?: string;
+  origin_space_id?: string;
   title?: string;
   has_child?: boolean;
 }
@@ -83,13 +84,46 @@ export async function getNodeByToken(client: FeishuClient, token: string, objTyp
   return data?.node;
 }
 
+export interface ResolvedWikiRoot {
+  spaceId: string;
+  nodeToken: string;
+  objToken: string;
+  objType: string;
+  title: string;
+  parentNodeToken?: string;
+}
+
+/**
+ * Resolve a wiki URL/token to the space and node that actually own it.
+ *
+ * A public /wiki/<token> URL does not carry the space id. The node lookup
+ * endpoint does, and it also exposes the origin space/node for shortcuts.
+ */
+export async function resolveWikiRoot(client: FeishuClient, token: string): Promise<ResolvedWikiRoot | undefined> {
+  const node = await getNodeByToken(client, token, "wiki");
+  if (!node) return undefined;
+
+  const spaceId = (node.node_type === "shortcut" ? node.origin_space_id : node.space_id)?.trim() ?? "";
+  const nodeToken = (node.node_type === "shortcut" ? node.origin_node_token : node.node_token)?.trim() ?? "";
+  const objToken = node.obj_token?.trim() ?? "";
+  if (!spaceId || !nodeToken || !objToken) return undefined;
+  return {
+    spaceId,
+    nodeToken,
+    objToken,
+    objType: node.obj_type,
+    title: (node.title ?? "").trim(),
+    parentNodeToken: node.parent_node_token,
+  };
+}
+
 export async function walkWikiTree(
   client: FeishuClient,
   spaceId: string,
   rootNodeToken: string | undefined,
-  options: { rootContainerNode?: string; onProgress?: (visited: number, relDir: string) => void } = {},
+  options: { rootContainerNode?: string; rootEntry?: WikiTreeEntry; onProgress?: (visited: number, relDir: string) => void } = {},
 ): Promise<WikiTreeEntry[]> {
-  const entries: WikiTreeEntry[] = [];
+  const entries: WikiTreeEntry[] = options.rootEntry ? [options.rootEntry] : [];
   // rootNodeToken 为空表示以知识空间顶层为根
   const queue: { nodeToken: string | undefined; relDir: string; depth: number }[] = [{ nodeToken: rootNodeToken, relDir: "", depth: 0 }];
   const visited = new Set<string>(rootNodeToken ? [rootNodeToken] : []);

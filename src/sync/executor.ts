@@ -9,7 +9,7 @@ import { describeError, ensureFolder } from "../log";
 import { sha256Hex } from "./hash";
 import { localStat, readLocalBytes, writeLocalBytes } from "./scanner";
 import type { FileRecord, PlanItem, PluginSettings, SyncAction, SyncPlan, SyncState } from "./types";
-import { CONFLICT_DIR, basenameOf, dirnameOf } from "./types";
+import { CONFLICT_DIR, basenameOf, dirnameOf, stripLocalFolder } from "./types";
 
 export interface ReportEntry {
   relPath: string;
@@ -92,8 +92,9 @@ export async function executePlan(plan: SyncPlan, ctx: ExecutionContext, options
   };
 
   const resolveFolderNode = async (relDir: string, needFileParent: boolean): Promise<string | undefined> => {
+    const remoteRelDir = stripLocalFolder(settings.localFolder, relDir);
     // needFileParent=false 只用于建目录节点：未指定根节点时目录直接挂空间顶层
-    if (settings.folderMode === "flat" || relDir === "") {
+    if (settings.folderMode === "flat" || remoteRelDir === "") {
       return needFileParent ? ensureRootContainer() : ctx.rootNodeToken;
     }
     const cached = folderNodes.get(relDir);
@@ -113,7 +114,9 @@ export async function executePlan(plan: SyncPlan, ctx: ExecutionContext, options
   };
 
   const remoteFileName = (relPath: string): string =>
-    settings.folderMode === "flat" ? relPath.split("/").join(settings.flatSeparator) : basenameOf(relPath);
+    settings.folderMode === "flat"
+      ? stripLocalFolder(settings.localFolder, relPath).split("/").join(settings.flatSeparator)
+      : basenameOf(relPath);
 
   const writeConflictCopy = async (relPath: string, bytes: ArrayBuffer, localHash: string, remoteHash: string): Promise<string> => {
     const copyPath = conflictCopyRelPath(relPath);
