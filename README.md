@@ -1,17 +1,29 @@
 # Feishu Wiki Sync
 
 > [!NOTE]
-> **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**，不是官方发布渠道。在上游 0.1.2 的基础上做了若干增强；感谢上游作者的工作。本仓库的 [Releases 页面](https://github.com/wsa0227/feishu-sync-double/releases)提供二开版本的安装包。
+> **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**。在上游 0.1.2 的基础上做了若干增强；感谢上游作者的工作。本仓库的 [Releases 页面](https://github.com/wsa0227/feishu-sync-double/releases)提供二开版本的安装包。
 
 将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.4**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
 
-仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入。本二开版本已上架 **Obsidian 社区插件市场**（独立 ID：`feishu-sync-double`），插件内直接搜索安装。
+仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入。本二开版本已上架 **Obsidian 社区插件市场**（名字：` Feishu Wiki Sync Double`），插件内直接搜索安装。
 
 ## English
 
 **Feishu Wiki Sync Double** is a desktop Obsidian plugin that keeps your vault in sync with Feishu wikis. Paste a link to a shared wiki or a single shared document and the whole tree lands locally as Markdown — content, images, and folder structure included. A status-bar panel manages multiple wikis at once: "check updates" is fetch-only (changes get flagged before anything is pulled), so you can pull one wiki or all of them with one click. Wikis you own can sync both ways — notes written in Obsidian publish straight back to Feishu docs. Conflict-safe by default: nothing is deleted silently, and overwritten work is backed up. Free and open source.
 
 Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
+
+## 视频教程
+
+**90 秒快速了解**——飞书知识库没有批量导出？能看，就能搬走：
+
+![90 秒教程：飞书知识库搬进 Obsidian](docs/videos/feishu-wiki-sync-90s-tutorial.mp4)
+
+**完整保姆级教程**（安装 → 创建飞书自建应用 → 授权 → 添加知识库 → 拉取 → 检查更新，含字幕）：
+
+![Obsidian 插件完整教程](docs/videos/obsidian-plugin-tutorial.mp4)
+
+> 字幕文件：[中文字幕.srt](步骤图片/视频教程/成片/中文字幕.srt)。GitHub 网页播放器不加载外挂字幕，需要字幕时下载后用本地播放器打开。
 
 ## 为什么做这件事
 
