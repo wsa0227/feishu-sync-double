@@ -3,7 +3,7 @@
 > [!NOTE]
 > **本仓库是 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync) 的二次开发版本**，不是官方发布渠道。在上游 0.1.2 的基础上做了若干增强；感谢上游作者的工作。本仓库的 [Releases 页面](https://github.com/wsa0227/feishu-sync-double/releases)提供二开版本的安装包。
 
-将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.2**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
+将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.3**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
 
 仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入。本二开版本已上架 **Obsidian 社区插件市场**（独立 ID：`feishu-sync-double`），插件内直接搜索安装。
 
@@ -67,6 +67,7 @@ Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 - 三档位方向控制（仅拉取/双向/仅推送）加误推拦截
 - 设置页分组：授权等一次性配置收进抽屉，授权失效一键重授权
 - 已上架 Obsidian 社区插件市场：插件内搜索 **Feishu Wiki Sync Double** 直接安装，更新自动推送
+- `0.2.3` 修复：远端笔记标题含 Windows 非法文件名字符（如英文冒号）时，自动净化为全角后正常落盘，不再中止整次同步
 - `0.2.2` 已发布 [Release](https://github.com/wsa0227/feishu-sync-double/releases)
 
 还没做的：
@@ -132,9 +133,9 @@ Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 
 ### 方式二：手动安装构建包
 
-从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.2`）：
+从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.3`）：
 
-1. 下载并解压 `feishu-sync-double-0.2.2.zip`，得到 `feishu-sync-double` 文件夹。
+1. 下载并解压 `feishu-sync-double-0.2.3.zip`，得到 `feishu-sync-double` 文件夹。
 2. 关闭 Obsidian，将该文件夹放入目标仓库的 `.obsidian/plugins/` 下。最终应为：
 
    ```text
@@ -169,7 +170,7 @@ dist/
 │   ├── main.js
 │   ├── manifest.json
 │   └── styles.css
-├── feishu-sync-double-0.2.2.zip
+├── feishu-sync-double-0.2.3.zip
 └── SHA256SUMS
 ```
 

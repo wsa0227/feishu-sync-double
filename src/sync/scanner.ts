@@ -11,6 +11,25 @@ export function assertSafeVaultPath(relPath: string): void {
   }
 }
 
+/**
+ * 二开：把一段远端标题净化成合法的 vault 路径段。
+ * 飞书页面标题可以包含 \/:*?"<>| 这些 Windows 文件名非法字符（例如英文冒号），
+ * 直接落盘会被 assertSafeVaultPath 拒绝并中止整次同步。这里把它们替换成对应的全角字符
+ * （Windows 合法、肉眼几乎无差别），并去掉段尾的空格与 ASCII 点。
+ */
+export function sanitizeVaultSegment(segment: string): string {
+  return segment
+    .replace(/[\\\x00-\x1f]/g, "")
+    .replace(/:/g, "：")
+    .replace(/\*/g, "＊")
+    .replace(/\?/g, "？")
+    .replace(/"/g, "＂")
+    .replace(/</g, "＜")
+    .replace(/>/g, "＞")
+    .replace(/\|/g, "｜")
+    .replace(/[. ]+$/g, "");
+}
+
 function globToRegExp(pattern: string): RegExp {
   let source = "^";
   for (let index = 0; index < pattern.length; index += 1) {

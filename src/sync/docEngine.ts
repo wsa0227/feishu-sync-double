@@ -17,7 +17,7 @@ import type { PlanDecision, RunOptions, RunResult } from "./engine";
 import { parseTokenFromInput } from "./engine";
 import { sha256Hex } from "./hash";
 import type { ReportEntry } from "./executor";
-import { PathFilter, readLocalBytes, scanLocalNotes } from "./scanner";
+import { PathFilter, readLocalBytes, sanitizeVaultSegment, scanLocalNotes } from "./scanner";
 import type { LocalNote, PluginSettings, SyncPlan, UnsyncedNodeGroup } from "./types";
 import { basenameOf, countUnsyncedLeafNodes, dirnameOf, prefixLocalPath, stripLocalFolder } from "./types";
 import { sanitizeDirName } from "./profileStore";
@@ -141,7 +141,7 @@ export class DocSyncEngine {
             objToken: resolvedRoot.objToken,
             objType: resolvedRoot.objType,
             parentNodeToken: resolvedRoot.parentNodeToken,
-            title: resolvedRoot.title,
+            title: sanitizeVaultSegment(resolvedRoot.title),
             relDir: "",
             depth: 0,
           }

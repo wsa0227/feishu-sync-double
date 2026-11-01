@@ -2494,6 +2494,34 @@ async function main(): Promise<void> {
     }
   });
 
+  await scenario("15e 文档模式：标题带英文冒号等非法字符 → 净化为全角落盘，不再中止整次同步", async () => {
+    const fake = new FakeFeishu({ seedRootNode: false });
+    __setRequestUrlHandler(fake.handler);
+    try {
+      const container = fake.seedWikiDocument({ title: "评测:专项", content: "<title>评测:专项</title>" });
+      fake.seedWikiDocument({
+        title: "2024高考数学:大模型解题能力几问。",
+        content: "<title>2024高考数学:大模型解题能力几问。</title>\n正文内容。\n",
+        parentNodeToken: container.nodeToken,
+      });
+
+      const vaultRoot = path.join(TMP_ROOT, "vault-doc-sanitize");
+      fs.mkdirSync(vaultRoot, { recursive: true });
+      const h = createDocHarness(fake, vaultRoot, { localFolder: "" });
+
+      const first = await runDocRound(h, "非法字符第 1 轮：全新拉取", "pull");
+      eq(first.result.plan.counts["create-local"] ?? 0, 1, "子文档正常进计划（容器为空被剔除）");
+      eq(readVaultFile("评测：专项/2024高考数学：大模型解题能力几问。.md", vaultRoot), "正文内容。\n", "冒号应净化为全角后正常落盘");
+      ok(!fs.existsSync(path.join(vaultRoot, "评测：专项", "2024高考数学:大模型解题能力几问。.md")), "原始英文名不应存在");
+      const second = await runDocRound(h, "非法字符第 2 轮：无改动", "pull");
+      eq(second.result.plan.counts.skip ?? 0, 1, "净化后的文件名稳定，第二轮 skip 不震荡");
+
+      return "标题冒号净化为全角：评测：专项/2024高考数学：…。.md 正常落盘且不震荡";
+    } finally {
+      __setRequestUrlHandler(docFake.handler);
+    }
+  });
+
   await scenario("16 文档模式：无改动重跑（0 次写请求，全部 skip）", async () => {
     const { result, delta } = await runDocRound(dh, "文档模式第 2 轮：没有任何改动");
 

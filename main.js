@@ -1006,11 +1006,11 @@ async function ensureFolder(adapter, folderPath) {
 }
 
 // src/settings-tab.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 init_types();
 
 // src/convert/rules.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/feishu/docImages.ts
 var IMAGE_BLOCK_TYPE = 27;
@@ -1395,6 +1395,93 @@ function encodeFeishuMath(markdown) {
   });
 }
 
+// src/sync/scanner.ts
+var import_obsidian3 = require("obsidian");
+init_types();
+var ALWAYS_EXCLUDED = [".obsidian/**", ".trash/**", `${CONFLICT_DIR}/**`, "**/.DS_Store"];
+function assertSafeVaultPath(relPath) {
+  if (!relPath || /[\\\x00-\x1f:]/.test(relPath) || relPath.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new Error(`\u65E0\u6548\u7684\u4ED3\u5E93\u76F8\u5BF9\u8DEF\u5F84\uFF1A${relPath}`);
+  }
+}
+function sanitizeVaultSegment(segment) {
+  return segment.replace(/[\\\x00-\x1f]/g, "").replace(/:/g, "\uFF1A").replace(/\*/g, "\uFF0A").replace(/\?/g, "\uFF1F").replace(/"/g, "\uFF02").replace(/</g, "\uFF1C").replace(/>/g, "\uFF1E").replace(/\|/g, "\uFF5C").replace(/[. ]+$/g, "");
+}
+function globToRegExp(pattern) {
+  let source = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "*") {
+      if (pattern[index + 1] === "*") {
+        if (pattern[index + 2] === "/") {
+          source += "(?:.*/)?";
+          index += 2;
+        } else {
+          source += ".*";
+          index += 1;
+        }
+      } else {
+        source += "[^/]*";
+      }
+    } else if (char === "?") {
+      source += "[^/]";
+    } else if ("\\^$.|+()[]{}".includes(char)) {
+      source += `\\${char}`;
+    } else {
+      source += char;
+    }
+  }
+  return new RegExp(`${source}$`);
+}
+var PathFilter = class {
+  constructor(userPatterns) {
+    const raw = userPatterns.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line) => line.endsWith("/") ? `${line}**` : line).map((line) => line.replace(/^\.\//, "").replace(/^\//, ""));
+    this.patterns = [...ALWAYS_EXCLUDED, ...raw].map(globToRegExp);
+  }
+  isExcluded(relPath) {
+    return this.patterns.some((pattern) => pattern.test(relPath));
+  }
+};
+function scanLocalNotes(app, filter, localFolder = "") {
+  const notes = /* @__PURE__ */ new Map();
+  const prefix = localFolder ? `${localFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")}/` : "";
+  for (const file of app.vault.getMarkdownFiles()) {
+    if (prefix && !file.path.startsWith(prefix))
+      continue;
+    if (filter.isExcluded(file.path))
+      continue;
+    const stat = file.stat;
+    notes.set(file.path, { relPath: file.path, size: stat?.size ?? 0, mtime: stat?.mtime ?? 0 });
+  }
+  return notes;
+}
+async function readLocalBytes(app, relPath) {
+  const file = app.vault.getAbstractFileByPath(relPath);
+  if (!(file instanceof import_obsidian3.TFile)) {
+    throw new Error(`\u627E\u4E0D\u5230\u672C\u5730\u6587\u4EF6\uFF1A${relPath}`);
+  }
+  return app.vault.readBinary(file);
+}
+function localStat(app, relPath) {
+  const file = app.vault.getAbstractFileByPath(relPath);
+  if (!(file instanceof import_obsidian3.TFile))
+    return { size: 0, mtime: 0 };
+  return { size: file.stat?.size ?? 0, mtime: file.stat?.mtime ?? 0 };
+}
+async function writeLocalBytes(app, relPath, data) {
+  assertSafeVaultPath(relPath);
+  const existing = app.vault.getAbstractFileByPath(relPath);
+  if (existing instanceof import_obsidian3.TFile) {
+    await app.vault.modifyBinary(existing, data);
+    return;
+  }
+  const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
+  if (dir && !app.vault.getAbstractFileByPath(dir)) {
+    await app.vault.createFolder(dir).catch(() => void 0);
+  }
+  await app.vault.createBinary(relPath, data);
+}
+
 // src/convert/rules.ts
 var RULES_PATH = ".obsidian/feishu-sync/rules.json";
 var RULES_VERSION = 3;
@@ -1621,10 +1708,12 @@ var dropTitleHeading = {
       return input;
     const heading = `# ${title}`;
     const xmlTitle = /^<title>([\s\S]*?)<\/title>(?:\r?\n)?(?:\r?\n)?/.exec(input);
-    if (xmlTitle && decodeXmlText(xmlTitle[1]).trim() === title)
+    const sameTitle = (value) => sanitizeVaultSegment(decodeXmlText(value).trim()) === sanitizeVaultSegment(title);
+    if (xmlTitle && sameTitle(xmlTitle[1]))
       return input.slice(xmlTitle[0].length);
     const lines = input.split("\n");
-    if ((lines[0] ?? "").trim() !== heading)
+    const firstHeading = /^#\s+(.*?)\s*$/.exec((lines[0] ?? "").trim());
+    if (!firstHeading || !sameTitle(firstHeading[1]))
       return input;
     if ((ctx.localContent.split("\n")[0] ?? "").trim() === heading)
       return input;
@@ -1895,7 +1984,7 @@ function parseRulesFile(text, warnings = []) {
   return mergeRulesFile(JSON.parse(text), warnings);
 }
 async function writeRulesFile(adapter, rules) {
-  const path = (0, import_obsidian3.normalizePath)(RULES_PATH);
+  const path = (0, import_obsidian4.normalizePath)(RULES_PATH);
   const dir = path.slice(0, path.lastIndexOf("/"));
   if (dir)
     await ensureFolder(adapter, dir);
@@ -1903,7 +1992,7 @@ async function writeRulesFile(adapter, rules) {
 `);
 }
 async function loadRules(adapter, logger) {
-  const path = (0, import_obsidian3.normalizePath)(RULES_PATH);
+  const path = (0, import_obsidian4.normalizePath)(RULES_PATH);
   if (!await adapter.exists(path)) {
     const rules = defaultRulesFile();
     try {
@@ -1978,7 +2067,7 @@ function pullRulesFingerprint(rules) {
 
 // src/settings-tab.ts
 init_profileStore();
-var SpacePickerModal = class extends import_obsidian4.FuzzySuggestModal {
+var SpacePickerModal = class extends import_obsidian5.FuzzySuggestModal {
   constructor(app, spaces, onChoose) {
     super(app);
     this.spaces = spaces;
@@ -1995,7 +2084,7 @@ var SpacePickerModal = class extends import_obsidian4.FuzzySuggestModal {
     this.onChoose(space);
   }
 };
-var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
+var FeishuWikiSyncSettingTab = class extends import_obsidian5.PluginSettingTab {
   constructor(app, host) {
     super(app, host);
     this.host = host;
@@ -2016,7 +2105,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       });
       const fix = banner.createEl("button", { text: "\u91CD\u65B0\u6388\u6743", cls: "mod-cta" });
       fix.onclick = () => {
-        void this.host.startAuthorization().then(() => this.display()).catch((error) => new import_obsidian4.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`, 8e3));
+        void this.host.startAuthorization().then(() => this.display()).catch((error) => new import_obsidian5.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`, 8e3));
       };
     }
     this.renderTargetAndProfile(containerEl, settings);
@@ -2058,12 +2147,12 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
     const profiles = settings.profiles ?? [];
     const active = profiles.find((item3) => item3.id === settings.activeProfileId);
     const direction = settings.syncDirection ?? "both";
-    new import_obsidian4.Setting(containerEl).setName("\u77E5\u8BC6\u5E93").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u77E5\u8BC6\u5E93").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "\u4E00\u4E2A\u77E5\u8BC6\u5E93\u6761\u76EE = \u4E00\u4E2A\u98DE\u4E66\u77E5\u8BC6\u5E93\uFF08\u7A7A\u95F4/\u6839\u8282\u70B9\uFF09+ \u4E00\u4E2A\u672C\u5730\u76EE\u5F55 + \u4E00\u79CD\u540C\u6B65\u65B9\u5F0F\u3002\u8981\u8DDF\u8BFB\u6216\u7BA1\u7406\u65B0\u7684\u77E5\u8BC6\u5E93\uFF0C\u6DFB\u52A0\u4E00\u4E2A\u5373\u53EF\uFF0C\u4E0D\u7528\u6765\u56DE\u6539\u914D\u7F6E\u3002"
     });
-    const switchSetting = new import_obsidian4.Setting(containerEl).setName("\u5F53\u524D\u77E5\u8BC6\u5E93");
+    const switchSetting = new import_obsidian5.Setting(containerEl).setName("\u5F53\u524D\u77E5\u8BC6\u5E93");
     if (profiles.length > 1) {
       switchSetting.addDropdown((dropdown) => {
         for (const profile of profiles) {
@@ -2081,7 +2170,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       (button) => button.setButtonText("\u7BA1\u7406\u77E5\u8BC6\u5E93\u2026").onClick(() => this.host.openWikiPanel())
     );
     switchSetting.addButton((button) => button.setButtonText("\u2795 \u6DFB\u52A0\u77E5\u8BC6\u5E93").setCta().onClick(() => this.host.openAddWikiWizard()));
-    new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u65B9\u5F0F\uFF08\u65B9\u5411\uFF09").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("\u540C\u6B65\u65B9\u5F0F\uFF08\u65B9\u5411\uFF09").setDesc(
       "\u4EC5\u62C9\u53D6\uFF08\u53EA\u8BFB\uFF09\uFF1A\u53EA\u628A\u8FDC\u7AEF\u5185\u5BB9\u62C9\u5230\u672C\u5730\uFF0C\u51B2\u7A81\u9ED8\u8BA4\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF08\u672C\u5730\u65E7\u7248\u81EA\u52A8\u53E6\u5B58\u526F\u672C\uFF09\uFF0C\u9002\u5408\u5B66\u4E60\u522B\u4EBA\u7684\u77E5\u8BC6\u5E93\uFF1B\u53CC\u5411\u534F\u4F5C\uFF1A\u4E24\u8FB9\u4E92\u76F8\u540C\u6B65\uFF0C\u51B2\u7A81\u4FDD\u7559\u53CC\u65B9\uFF1B\u4EC5\u63A8\u9001\uFF1A\u5B9A\u671F\u628A\u672C\u5730\u5185\u5BB9\u53D1\u5E03\u5230\u8FDC\u7AEF\u3002\u72B6\u6001\u680F\u4E0E\u4FA7\u680F\u6309\u94AE\u6309\u540C\u6B65\u65B9\u5F0F\u6267\u884C\u3002"
     ).addDropdown(
       (dropdown) => dropdown.addOption("pull", "\u4EC5\u62C9\u53D6\uFF08\u53EA\u8BFB\uFF09").addOption("both", "\u53CC\u5411\u534F\u4F5C").addOption("push", "\u4EC5\u63A8\u9001").setValue(direction).onChange(async (value) => {
@@ -2101,7 +2190,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       })
     );
     if (direction === "pull") {
-      new import_obsidian4.Setting(containerEl).setName("\u53EA\u8BFB\u6863\u51B2\u7A81\u7B56\u7565").setDesc(
+      new import_obsidian5.Setting(containerEl).setName("\u53EA\u8BFB\u6863\u51B2\u7A81\u7B56\u7565").setDesc(
         "\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF1A\u672C\u5730\u662F\u8FDC\u7AEF\u7684\u53EA\u8BFB\u955C\u50CF\uFF0C\u51B2\u7A81\u65F6\u4EE5\u8FDC\u7AEF\u4E3A\u51C6\uFF0C\u672C\u5730\u6539\u52A8\u81EA\u52A8\u53E6\u5B58\u5230 .obsidian/feishu-sync/conflicts/\u3002\u4FDD\u7559\u53CC\u65B9\uFF1A\u6CBF\u7528\u4E0A\u6E38\u884C\u4E3A\uFF0C\u751F\u6210\u51B2\u7A81\u526F\u672C\u7B49\u5F85\u4EBA\u5DE5\u5904\u7406\u3002"
       ).addDropdown(
         (dropdown) => dropdown.addOption("remote-wins", "\u8FDC\u7AEF\u8986\u76D6\u672C\u5730\uFF08\u63A8\u8350\uFF09").addOption("keep-both", "\u4FDD\u7559\u53CC\u65B9").setValue(settings.conflictPolicy ?? "remote-wins").onChange(async (value) => {
@@ -2114,7 +2203,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       );
     }
     if (active) {
-      new import_obsidian4.Setting(containerEl).setName("\u77E5\u8BC6\u5E93\u540D\u79F0").setDesc("\u4EC5\u7528\u4E8E\u5728\u77E5\u8BC6\u5E93\u5217\u8868\u91CC\u8FA8\u8BA4").addText(
+      new import_obsidian5.Setting(containerEl).setName("\u77E5\u8BC6\u5E93\u540D\u79F0").setDesc("\u4EC5\u7528\u4E8E\u5728\u77E5\u8BC6\u5E93\u5217\u8868\u91CC\u8FA8\u8BA4").addText(
         (text) => text.setValue(active.name).onChange(async (value) => {
           active.name = value.trim() || active.name;
           await this.host.saveSettings();
@@ -2132,8 +2221,8 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
     }
   }
   renderSyncMode(containerEl, settings) {
-    new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u6A21\u5F0F").setHeading();
-    new import_obsidian4.Setting(containerEl).setName("\u7B14\u8BB0\u540C\u6B65\u5F62\u6001").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("\u540C\u6B65\u6A21\u5F0F").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u7B14\u8BB0\u540C\u6B65\u5F62\u6001").setDesc(
       "\u6587\u4EF6\u955C\u50CF\u4FDD\u7559\u539F\u59CB Markdown\uFF1B\u6587\u6863\u6A21\u5F0F\u751F\u6210\u53EF\u7F16\u8F91\u7684\u98DE\u4E66\u65B0\u7248\u6587\u6863\uFF0C\u652F\u6301\u56FE\u7247\u3001\u5217\u8868\u3001\u4EE3\u7801\u3001\u8868\u683C\u548C\u516C\u5F0F\u3002\u6587\u6863\u6A21\u5F0F\u4F1A\u8F6C\u6362\u6392\u7248\uFF0C\u4E0D\u80FD\u4FDD\u8BC1\u6E90\u7801\u9010\u5B57\u4E0D\u53D8\uFF1B\u5207\u6362\u6A21\u5F0F\u4F1A\u91CD\u65B0\u5BF9\u63A5\uFF0C\u540C\u540D\u4F46\u5185\u5BB9\u4E0D\u540C\u5219\u4FDD\u7559\u53CC\u65B9\u5E76\u62A5\u544A\u51B2\u7A81\u3002"
     ).addDropdown(
       (dropdown) => dropdown.addOption("md", "\u6587\u4EF6\u955C\u50CF\uFF08\u539F\u751F Markdown\uFF09").addOption("doc", "\u6587\u6863\u6A21\u5F0F\uFF08\u98DE\u4E66\u65B0\u7248\u6587\u6863\uFF09").setValue(settings.syncMode).onChange(async (value) => {
@@ -2143,7 +2232,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         settings.syncMode = next;
         await this.host.saveSettings();
         this.host.refreshAutoSync();
-        new import_obsidian4.Notice(
+        new import_obsidian5.Notice(
           next === "doc" ? "\u5DF2\u5207\u5230\u6587\u6863\u6A21\u5F0F\uFF1A\u4E0B\u4E00\u6B21\u540C\u6B65\u6309\u300C\u9996\u6B21\u5BF9\u63A5\u300D\u5224\u5B9A\uFF0C\u4E0D\u4F1A\u76F4\u63A5\u8986\u76D6\u672C\u5730" : "\u5DF2\u5207\u5230\u6587\u4EF6\u955C\u50CF\u6A21\u5F0F\uFF1A\u4E0B\u4E00\u6B21\u540C\u6B65\u6309\u300C\u9996\u6B21\u5BF9\u63A5\u300D\u5224\u5B9A\uFF0C\u4E0D\u4F1A\u76F4\u63A5\u8986\u76D6\u672C\u5730"
         );
         this.display();
@@ -2155,63 +2244,63 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
     });
   }
   renderRules(containerEl) {
-    new import_obsidian4.Setting(containerEl).setName("\u8F6C\u6362\u89C4\u5219\uFF08\u6587\u6863\u6A21\u5F0F\uFF09").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u8F6C\u6362\u89C4\u5219\uFF08\u6587\u6863\u6A21\u5F0F\uFF09").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: `\u89C4\u5219\u6587\u4EF6\uFF1A${RULES_PATH}\uFF0C\u6BCF\u6761\u89C4\u5219\u90FD\u6709 enabled \u5F00\u5173\u4E0E description \u8BF4\u660E\u3002\u4E0A\u884C\u89C4\u5219\u5728\u53D1\u7ED9\u98DE\u4E66\u4E4B\u524D\u4F5C\u7528\u4E8E\u672C\u5730 Markdown\uFF0C\u4E0B\u884C\u89C4\u5219\u5728\u5199\u56DE\u672C\u5730\u4E4B\u524D\u4F5C\u7528\u4E8E\u53D6\u56DE\u7684 Markdown\u3002\u6587\u4EF6\u4E0D\u5B58\u5728\u65F6\u4F1A\u81EA\u52A8\u5199\u5165\u4E00\u4EFD\u5B8C\u6574\u9ED8\u8BA4\u89C4\u5219\uFF1B\u52A0\u8F7D\u65F6\u4E0E\u5185\u7F6E\u9ED8\u8BA4\u6309 id \u5408\u5E76\uFF0C\u6539\u8FC7\u7684\u4EE5\u6587\u4EF6\u4E3A\u51C6\u3002\u4E0A\u884C\u89C4\u5219\u66F4\u65B0\u540E\uFF0C\u65E7\u6587\u6863\u4F1A\u8FDB\u5165\u5237\u65B0\u8BA1\u5212\uFF1B\u98DE\u4E66\u6709\u65B0\u6539\u52A8\u65F6\u4F18\u5148\u5904\u7406\u6539\u52A8\u3002\u539F\u7A3F\u683C\u5F0F\u63D0\u793A\u9ED8\u8BA4\u5173\u95ED\uFF0C\u53EF\u901A\u8FC7 source-format-diagnostics \u5F00\u542F\u3002`
     });
-    new import_obsidian4.Setting(containerEl).setName("\u6253\u5F00\u89C4\u5219\u6587\u4EF6").setDesc("\u7528\u7CFB\u7EDF\u9ED8\u8BA4\u7A0B\u5E8F\u6253\u5F00 rules.json\uFF0C\u6539\u5B8C\u4FDD\u5B58\uFF0C\u4E0B\u6B21\u540C\u6B65\u751F\u6548").addButton(
+    new import_obsidian5.Setting(containerEl).setName("\u6253\u5F00\u89C4\u5219\u6587\u4EF6").setDesc("\u7528\u7CFB\u7EDF\u9ED8\u8BA4\u7A0B\u5E8F\u6253\u5F00 rules.json\uFF0C\u6539\u5B8C\u4FDD\u5B58\uFF0C\u4E0B\u6B21\u540C\u6B65\u751F\u6548").addButton(
       (button) => button.setButtonText("\u6253\u5F00").onClick(async () => {
         const adapter = this.host.app.vault.adapter;
-        const path = (0, import_obsidian4.normalizePath)(RULES_PATH);
+        const path = (0, import_obsidian5.normalizePath)(RULES_PATH);
         try {
           if (!await adapter.exists(path))
             await writeRulesFile(adapter, defaultRulesFile());
-          if (adapter instanceof import_obsidian4.FileSystemAdapter) {
+          if (adapter instanceof import_obsidian5.FileSystemAdapter) {
             const { shell } = require("electron");
             const error = await shell.openPath(adapter.getFullPath(path));
             if (error)
               throw new Error(error);
           } else {
-            new import_obsidian4.Notice(`\u8BF7\u5728\u6587\u4EF6\u7CFB\u7EDF\u91CC\u6253\u5F00 ${path}`);
+            new import_obsidian5.Notice(`\u8BF7\u5728\u6587\u4EF6\u7CFB\u7EDF\u91CC\u6253\u5F00 ${path}`);
           }
         } catch (error) {
-          new import_obsidian4.Notice(`\u6253\u5F00\u89C4\u5219\u6587\u4EF6\u5931\u8D25\uFF1A${String(error)}\u3002\u6587\u4EF6\u4F4D\u7F6E\uFF1A${path}`, 8e3);
+          new import_obsidian5.Notice(`\u6253\u5F00\u89C4\u5219\u6587\u4EF6\u5931\u8D25\uFF1A${String(error)}\u3002\u6587\u4EF6\u4F4D\u7F6E\uFF1A${path}`, 8e3);
         }
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u91CD\u5EFA\u4E3A\u9ED8\u8BA4\u89C4\u5219").setDesc("\u7528\u5185\u7F6E\u9ED8\u8BA4\u89C4\u5219\u8986\u76D6 rules.json\uFF08\u4F1A\u4E22\u6389\u4F60\u5728\u6587\u4EF6\u91CC\u7684\u6539\u52A8\uFF09\uFF0C\u5E76\u505A\u4E00\u6B21\u89E3\u6790\u68C0\u67E5").addButton(
+    new import_obsidian5.Setting(containerEl).setName("\u91CD\u5EFA\u4E3A\u9ED8\u8BA4\u89C4\u5219").setDesc("\u7528\u5185\u7F6E\u9ED8\u8BA4\u89C4\u5219\u8986\u76D6 rules.json\uFF08\u4F1A\u4E22\u6389\u4F60\u5728\u6587\u4EF6\u91CC\u7684\u6539\u52A8\uFF09\uFF0C\u5E76\u505A\u4E00\u6B21\u89E3\u6790\u68C0\u67E5").addButton(
       (button) => button.setButtonText("\u91CD\u5EFA").onClick(async () => {
         try {
           const adapter = this.host.app.vault.adapter;
           await writeRulesFile(adapter, defaultRulesFile());
           const rules = await loadRules(adapter, this.host.logger);
           const enabled = (list) => list.filter((entry) => entry.enabled).length;
-          new import_obsidian4.Notice(
+          new import_obsidian5.Notice(
             `\u5DF2\u91CD\u5EFA ${RULES_PATH}\uFF1A\u4E0A\u884C ${enabled(rules.toFeishu)} \u6761\u3001\u4E0B\u884C ${enabled(rules.toObsidian)} \u6761\u89C4\u5219\u5F00\u542F`,
             8e3
           );
           this.display();
         } catch (error) {
-          new import_obsidian4.Notice(`\u91CD\u5EFA\u89C4\u5219\u6587\u4EF6\u5931\u8D25\uFF1A${String(error)}`, 8e3);
+          new import_obsidian5.Notice(`\u91CD\u5EFA\u89C4\u5219\u6587\u4EF6\u5931\u8D25\uFF1A${String(error)}`, 8e3);
         }
       })
     );
   }
   renderAuth(containerEl, settings) {
-    new import_obsidian4.Setting(containerEl).setName("\u98DE\u4E66\u5E94\u7528\u4E0E\u6388\u6743").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u98DE\u4E66\u5E94\u7528\u4E0E\u6388\u6743").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "\u9700\u8981\u4E00\u4E2A\u98DE\u4E66\u4F01\u4E1A\u81EA\u5EFA\u5E94\u7528\u3002\u9ED8\u8BA4\u6388\u6743\u8303\u56F4\uFF1Adrive:drive\u3001wiki:wiki\u3001wiki:node:read\u3001wiki:node:retrieve\u3001docx:document\u3001docs:document.media:download\u3001docs:document.media:upload\uFF1B\u8BE6\u89C1 README \u7684\u914D\u7F6E\u6B65\u9AA4\u3002\u7528\u300C\u7528\u6237\u6388\u6743\u300D\u65F6\u8FD8\u8981\u5728\u5F00\u653E\u5E73\u53F0\u767B\u8BB0\u4E0B\u65B9\u91CD\u5B9A\u5411\u5730\u5740\uFF0C\u5E76\u5305\u542B offline_access \u4EE5\u81EA\u52A8\u7EED\u671F\u3002"
     });
-    new import_obsidian4.Setting(containerEl).setName("\u8EAB\u4EFD\u6A21\u5F0F").setDesc("\u7528\u6237\u6388\u6743\uFF1A\u4EE5\u4F60\u672C\u4EBA\u7684\u8EAB\u4EFD\u8BBF\u95EE\u4E2A\u4EBA\u77E5\u8BC6\u5E93\uFF08\u63A8\u8350\uFF09\u3002\u5E94\u7528\u8EAB\u4EFD\uFF1A\u9700\u8981\u628A\u5E94\u7528\u6DFB\u52A0\u4E3A\u77E5\u8BC6\u5E93\u6210\u5458\u3002").addDropdown(
+    new import_obsidian5.Setting(containerEl).setName("\u8EAB\u4EFD\u6A21\u5F0F").setDesc("\u7528\u6237\u6388\u6743\uFF1A\u4EE5\u4F60\u672C\u4EBA\u7684\u8EAB\u4EFD\u8BBF\u95EE\u4E2A\u4EBA\u77E5\u8BC6\u5E93\uFF08\u63A8\u8350\uFF09\u3002\u5E94\u7528\u8EAB\u4EFD\uFF1A\u9700\u8981\u628A\u5E94\u7528\u6DFB\u52A0\u4E3A\u77E5\u8BC6\u5E93\u6210\u5458\u3002").addDropdown(
       (dropdown) => dropdown.addOption("user", "\u7528\u6237\u6388\u6743\uFF08user_access_token\uFF09").addOption("tenant", "\u5E94\u7528\u8EAB\u4EFD\uFF08tenant_access_token\uFF09").setValue(settings.authMode).onChange(async (value) => {
         settings.authMode = value;
         await this.host.saveSettings();
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("App ID").setDesc("\u98DE\u4E66\u5F00\u653E\u5E73\u53F0 \u2192 \u51ED\u8BC1\u4E0E\u57FA\u7840\u4FE1\u606F").addText(
+    new import_obsidian5.Setting(containerEl).setName("App ID").setDesc("\u98DE\u4E66\u5F00\u653E\u5E73\u53F0 \u2192 \u51ED\u8BC1\u4E0E\u57FA\u7840\u4FE1\u606F").addText(
       (text) => text.setValue(settings.appId).onChange(async (value) => {
         if (settings.appId !== value.trim())
           settings.userTokens = void 0;
@@ -2219,7 +2308,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.host.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("App Secret").setDesc("\u4FDD\u5B58\u5728\u63D2\u4EF6\u7684 data.json \u91CC\uFF0C\u8BF7\u52FF\u628A\u8BE5\u6587\u4EF6\u540C\u6B65\u5230\u516C\u5F00\u4ED3\u5E93").addText((text) => {
+    new import_obsidian5.Setting(containerEl).setName("App Secret").setDesc("\u4FDD\u5B58\u5728\u63D2\u4EF6\u7684 data.json \u91CC\uFF0C\u8BF7\u52FF\u628A\u8BE5\u6587\u4EF6\u540C\u6B65\u5230\u516C\u5F00\u4ED3\u5E93").addText((text) => {
       text.inputEl.type = "password";
       text.setValue(settings.appSecret).onChange(async (value) => {
         if (settings.appSecret !== value.trim())
@@ -2229,20 +2318,20 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       });
     });
     if (settings.authMode === "user") {
-      new import_obsidian4.Setting(containerEl).setName("\u91CD\u5B9A\u5411\u5730\u5740").setDesc("\u9700\u8981\u4E0E\u5F00\u653E\u5E73\u53F0\u91CC\u767B\u8BB0\u7684\u56DE\u8C03\u5730\u5740\u5B8C\u5168\u4E00\u81F4").addText(
+      new import_obsidian5.Setting(containerEl).setName("\u91CD\u5B9A\u5411\u5730\u5740").setDesc("\u9700\u8981\u4E0E\u5F00\u653E\u5E73\u53F0\u91CC\u767B\u8BB0\u7684\u56DE\u8C03\u5730\u5740\u5B8C\u5168\u4E00\u81F4").addText(
         (text) => text.setValue(settings.redirectUri).onChange(async (value) => {
           settings.redirectUri = value.trim();
           await this.host.saveSettings();
         })
       );
-      new import_obsidian4.Setting(containerEl).setName("\u6388\u6743\u8303\u56F4").setDesc("\u7A7A\u683C\u5206\u9694\uFF0C\u5FC5\u987B\u90FD\u662F\u5E94\u7528\u5DF2\u5F00\u901A\u7684\u6743\u9650\uFF1B\u77E5\u8BC6\u5E93\u516C\u5F00\u94FE\u63A5\u9700\u8981 wiki:node:read \u4E0E wiki:node:retrieve\uFF1Boffline_access \u7528\u4E8E\u81EA\u52A8\u7EED\u671F").addText(
+      new import_obsidian5.Setting(containerEl).setName("\u6388\u6743\u8303\u56F4").setDesc("\u7A7A\u683C\u5206\u9694\uFF0C\u5FC5\u987B\u90FD\u662F\u5E94\u7528\u5DF2\u5F00\u901A\u7684\u6743\u9650\uFF1B\u77E5\u8BC6\u5E93\u516C\u5F00\u94FE\u63A5\u9700\u8981 wiki:node:read \u4E0E wiki:node:retrieve\uFF1Boffline_access \u7528\u4E8E\u81EA\u52A8\u7EED\u671F").addText(
         (text) => text.setValue(settings.oauthScope).onChange(async (value) => {
           settings.oauthScope = value.trim();
           await this.host.saveSettings();
         })
       );
       const tokens = settings.userTokens;
-      new import_obsidian4.Setting(containerEl).setName("\u6388\u6743\u72B6\u6001").setDesc(
+      new import_obsidian5.Setting(containerEl).setName("\u6388\u6743\u72B6\u6001").setDesc(
         tokens?.refreshToken ? `\u5DF2\u6388\u6743\uFF0Crefresh token \u6709\u6548\u81F3 ${new Date(tokens.refreshExpiresAt).toLocaleString()}` : "\u5C1A\u672A\u6388\u6743"
       ).addButton(
         (button) => button.setButtonText(tokens?.refreshToken ? "\u91CD\u65B0\u6388\u6743" : "\u6388\u6743\u98DE\u4E66\u8D26\u53F7").setCta().onClick(async () => {
@@ -2250,7 +2339,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
             await this.host.startAuthorization();
             this.display();
           } catch (error) {
-            new import_obsidian4.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
+            new import_obsidian5.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
           }
         })
       ).addButton(
@@ -2259,7 +2348,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
             await this.host.startManualAuthorization();
             this.display();
           } catch (error) {
-            new import_obsidian4.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
+            new import_obsidian5.Notice(`\u6388\u6743\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
           }
         })
       ).addButton(
@@ -2269,24 +2358,24 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         })
       );
     }
-    new import_obsidian4.Setting(containerEl).setName("\u8FDE\u63A5\u6D4B\u8BD5").setDesc("\u62C9\u53D6\u5F53\u524D\u8EAB\u4EFD\u53EF\u89C1\u7684\u77E5\u8BC6\u7A7A\u95F4\u5217\u8868").addButton(
+    new import_obsidian5.Setting(containerEl).setName("\u8FDE\u63A5\u6D4B\u8BD5").setDesc("\u62C9\u53D6\u5F53\u524D\u8EAB\u4EFD\u53EF\u89C1\u7684\u77E5\u8BC6\u7A7A\u95F4\u5217\u8868").addButton(
       (button) => button.setButtonText("\u6D4B\u8BD5").onClick(async () => {
         try {
           const spaces = await this.host.engine.listSpaces();
-          new import_obsidian4.Notice(spaces.length > 0 ? `\u8FDE\u63A5\u6210\u529F\uFF0C\u53EF\u89C1\u77E5\u8BC6\u7A7A\u95F4 ${spaces.length} \u4E2A` : "\u8FDE\u63A5\u6210\u529F\uFF0C\u4F46\u6CA1\u6709\u53EF\u89C1\u7684\u77E5\u8BC6\u7A7A\u95F4");
+          new import_obsidian5.Notice(spaces.length > 0 ? `\u8FDE\u63A5\u6210\u529F\uFF0C\u53EF\u89C1\u77E5\u8BC6\u7A7A\u95F4 ${spaces.length} \u4E2A` : "\u8FDE\u63A5\u6210\u529F\uFF0C\u4F46\u6CA1\u6709\u53EF\u89C1\u7684\u77E5\u8BC6\u7A7A\u95F4");
         } catch (error) {
-          new import_obsidian4.Notice(`\u8FDE\u63A5\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`, 8e3);
+          new import_obsidian5.Notice(`\u8FDE\u63A5\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`, 8e3);
         }
       })
     );
   }
   renderTarget(containerEl, settings) {
-    new import_obsidian4.Setting(containerEl).setName("\u77E5\u8BC6\u5E93\u4F4D\u7F6E").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u77E5\u8BC6\u5E93\u4F4D\u7F6E").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "\u672C\u5730 vault \u6839\u76EE\u5F55 \u2194 \u77E5\u8BC6\u7A7A\u95F4\u3002\u53EA\u6709 .md \u6587\u4EF6\u53C2\u4E0E\u540C\u6B65\uFF1B\u540C\u6B65\u4F1A\u5728\u77E5\u8BC6\u5E93\u91CC\u6309\u672C\u5730\u76EE\u5F55\u5C42\u7EA7\u521B\u5EFA\u9875\u9762\u3002"
     });
-    new import_obsidian4.Setting(containerEl).setName("\u77E5\u8BC6\u7A7A\u95F4 space_id").setDesc("\u63A8\u8350\u7528\u300C\u62C9\u53D6\u5217\u8868\u300D\u9009\u62E9\u3002\u82E5\u5DF2\u586B\u5199\u53EF\u8BBF\u95EE\u7684 /wiki/ \u6839\u8282\u70B9\u94FE\u63A5\uFF0C\u8FD0\u884C\u540C\u6B65\u65F6\u4F1A\u81EA\u52A8\u89E3\u6790\u5E76\u5207\u6362\u5230\u8BE5\u8282\u70B9\u6240\u5C5E\u7684\u77E5\u8BC6\u7A7A\u95F4").addText(
+    new import_obsidian5.Setting(containerEl).setName("\u77E5\u8BC6\u7A7A\u95F4 space_id").setDesc("\u63A8\u8350\u7528\u300C\u62C9\u53D6\u5217\u8868\u300D\u9009\u62E9\u3002\u82E5\u5DF2\u586B\u5199\u53EF\u8BBF\u95EE\u7684 /wiki/ \u6839\u8282\u70B9\u94FE\u63A5\uFF0C\u8FD0\u884C\u540C\u6B65\u65F6\u4F1A\u81EA\u52A8\u89E3\u6790\u5E76\u5207\u6362\u5230\u8BE5\u8282\u70B9\u6240\u5C5E\u7684\u77E5\u8BC6\u7A7A\u95F4").addText(
       (text) => text.setValue(settings.spaceId).onChange(async (value) => {
         settings.spaceId = value.trim();
         await this.host.saveSettings();
@@ -2296,21 +2385,21 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         try {
           const spaces = await this.host.engine.listSpaces();
           if (spaces.length === 0) {
-            new import_obsidian4.Notice("\u5F53\u524D\u8EAB\u4EFD\u770B\u4E0D\u5230\u4EFB\u4F55\u77E5\u8BC6\u7A7A\u95F4");
+            new import_obsidian5.Notice("\u5F53\u524D\u8EAB\u4EFD\u770B\u4E0D\u5230\u4EFB\u4F55\u77E5\u8BC6\u7A7A\u95F4");
             return;
           }
           new SpacePickerModal(this.app, spaces, async (space) => {
             settings.spaceId = space.space_id;
             await this.host.saveSettings();
-            new import_obsidian4.Notice(`\u5DF2\u9009\u62E9\u77E5\u8BC6\u7A7A\u95F4\uFF1A${space.name}`);
+            new import_obsidian5.Notice(`\u5DF2\u9009\u62E9\u77E5\u8BC6\u7A7A\u95F4\uFF1A${space.name}`);
             this.display();
           }).open();
         } catch (error) {
-          new import_obsidian4.Notice(`\u62C9\u53D6\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`, 8e3);
+          new import_obsidian5.Notice(`\u62C9\u53D6\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`, 8e3);
         }
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u6839\u8282\u70B9\uFF08\u53EF\u7559\u7A7A\uFF09").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("\u540C\u6B65\u6839\u8282\u70B9\uFF08\u53EF\u7559\u7A7A\uFF09").setDesc(
       "\u7559\u7A7A = \u4EE5\u77E5\u8BC6\u7A7A\u95F4\u9876\u5C42\u4E3A\u540C\u6B65\u6839\uFF1Avault \u7684\u4E00\u7EA7\u76EE\u5F55\u4F1A\u53D8\u6210\u77E5\u8BC6\u5E93\u91CC\u7684\u4E00\u7EA7\u9875\u9762\uFF08vault \u6839\u76EE\u5F55\u4E0B\u7684\u6563\u88C5\u7B14\u8BB0\u4F1A\u653E\u8FDB\u4E0B\u65B9\u90A3\u4E2A\u9876\u5C42\u9875\u9762\u91CC\uFF09\u3002\u586B\u8282\u70B9\u94FE\u63A5\u6216 node_token \u5219\u6240\u6709\u5185\u5BB9\u90FD\u6302\u5230\u8BE5\u8282\u70B9\u4E0B\u9762\uFF0C\u98DE\u4E66\u4FA7\u4E0D\u4F1A\u591A\u51FA\u4E00\u4E2A\u6839\u9875\u9762\uFF1B\u6587\u6863\u6A21\u5F0F\u53EF\u7528\u4E0B\u65B9\u5F00\u5173\u628A\u6839\u9875\u9762\u6B63\u6587\u62C9\u53D6\u5230\u672C\u5730\u3002\u6CE8\u610F\uFF1A\u7559\u7A7A\u65F6\uFF0C\u77E5\u8BC6\u5E93\u9876\u5C42\u5DF2\u6709\u7684 .md \u6587\u4EF6\u4F1A\u88AB\u62C9\u53D6\u5230\u4F60\u7684 vault \u6839\u76EE\u5F55\u3002"
     ).addText(
       (text) => text.setValue(settings.rootNodeToken).onChange(async (value) => {
@@ -2319,12 +2408,12 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u672C\u5730\u540C\u6B65\u76EE\u5F55\uFF08\u53EF\u7559\u7A7A\uFF09").setDesc("\u76F8\u5BF9 vault \u6839\u76EE\u5F55\u586B\u5199\uFF0C\u4F8B\u5982 \u98DE\u4E66\u540C\u6B65 \u6216 \u6587\u6863/\u98DE\u4E66\uFF1B\u7559\u7A7A\u65F6\u76F4\u63A5\u653E\u5728 vault \u6839\u76EE\u5F55\u3002\u5207\u6362\u6B64\u76EE\u5F55\u540E\u4F1A\u6309\u65B0\u76EE\u5F55\u91CD\u65B0\u5BF9\u63A5\uFF0C\u4E0D\u4F1A\u79FB\u52A8\u65E7\u6587\u4EF6\u3002\u4E0D\u80FD\u4E0E\u5176\u4ED6\u77E5\u8BC6\u5E93\u7684\u76EE\u5F55\u91CD\u53E0\u3002").addText(
+    new import_obsidian5.Setting(containerEl).setName("\u672C\u5730\u540C\u6B65\u76EE\u5F55\uFF08\u53EF\u7559\u7A7A\uFF09").setDesc("\u76F8\u5BF9 vault \u6839\u76EE\u5F55\u586B\u5199\uFF0C\u4F8B\u5982 \u98DE\u4E66\u540C\u6B65 \u6216 \u6587\u6863/\u98DE\u4E66\uFF1B\u7559\u7A7A\u65F6\u76F4\u63A5\u653E\u5728 vault \u6839\u76EE\u5F55\u3002\u5207\u6362\u6B64\u76EE\u5F55\u540E\u4F1A\u6309\u65B0\u76EE\u5F55\u91CD\u65B0\u5BF9\u63A5\uFF0C\u4E0D\u4F1A\u79FB\u52A8\u65E7\u6587\u4EF6\u3002\u4E0D\u80FD\u4E0E\u5176\u4ED6\u77E5\u8BC6\u5E93\u7684\u76EE\u5F55\u91CD\u53E0\u3002").addText(
       (text) => text.setValue(settings.localFolder).onChange(async (value) => {
         const next = normalizeLocalFolder(value);
         const conflictName = findFolderConflict(settings, next, settings.activeProfileId);
         if (conflictName) {
-          new import_obsidian4.Notice(`\u672C\u5730\u76EE\u5F55\u4E0E\u77E5\u8BC6\u5E93\u300C${conflictName}\u300D\u91CD\u53E0\uFF0C\u4E24\u4E2A\u77E5\u8BC6\u5E93\u4F1A\u4E92\u76F8\u8986\u76D6\u3002\u672A\u4FDD\u5B58\uFF0C\u8BF7\u6362\u4E00\u4E2A\u76EE\u5F55\u3002`, 8e3);
+          new import_obsidian5.Notice(`\u672C\u5730\u76EE\u5F55\u4E0E\u77E5\u8BC6\u5E93\u300C${conflictName}\u300D\u91CD\u53E0\uFF0C\u4E24\u4E2A\u77E5\u8BC6\u5E93\u4F1A\u4E92\u76F8\u8986\u76D6\u3002\u672A\u4FDD\u5B58\uFF0C\u8BF7\u6362\u4E00\u4E2A\u76EE\u5F55\u3002`, 8e3);
           text.setValue(settings.localFolder);
           return;
         }
@@ -2333,7 +2422,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       })
     );
     if (settings.rootNodeToken.trim() && settings.syncMode === "doc") {
-      new import_obsidian4.Setting(containerEl).setName("\u62C9\u53D6\u6839\u9875\u9762\u6B63\u6587").setDesc("\u5F00\u542F\u540E\uFF0C\u586B\u5199\u7684 /wiki/... \u6839\u9875\u9762\u672C\u8EAB\u4E5F\u4F1A\u62C9\u53D6\u4E3A\u540C\u540D Markdown \u7B14\u8BB0\uFF1B\u5173\u95ED\u65F6\u53EA\u62C9\u53D6\u6839\u9875\u9762\u4E0B\u9762\u7684\u5B50\u6587\u6863\u3002").addToggle(
+      new import_obsidian5.Setting(containerEl).setName("\u62C9\u53D6\u6839\u9875\u9762\u6B63\u6587").setDesc("\u5F00\u542F\u540E\uFF0C\u586B\u5199\u7684 /wiki/... \u6839\u9875\u9762\u672C\u8EAB\u4E5F\u4F1A\u62C9\u53D6\u4E3A\u540C\u540D Markdown \u7B14\u8BB0\uFF1B\u5173\u95ED\u65F6\u53EA\u62C9\u53D6\u6839\u9875\u9762\u4E0B\u9762\u7684\u5B50\u6587\u6863\u3002").addToggle(
         (toggle) => toggle.setValue(settings.includeRootPage).onChange(async (value) => {
           settings.includeRootPage = value;
           await this.host.saveSettings();
@@ -2342,7 +2431,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       );
     }
     if (!settings.rootNodeToken.trim()) {
-      new import_obsidian4.Setting(containerEl).setName("\u6839\u76EE\u5F55\u9875\u9762\u6807\u9898").setDesc("\u5B58\u653E vault \u6839\u76EE\u5F55\u4E0B\u7B14\u8BB0\u7684\u90A3\u4E2A\u77E5\u8BC6\u5E93\u4E00\u7EA7\u9875\u9762\u7684\u540D\u79F0\uFF0C\u7559\u7A7A\u5219\u7528 vault \u7684\u540D\u5B57\uFF08\u5F53\u524D\uFF1A" + this.app.vault.getName() + "\uFF09").addText(
+      new import_obsidian5.Setting(containerEl).setName("\u6839\u76EE\u5F55\u9875\u9762\u6807\u9898").setDesc("\u5B58\u653E vault \u6839\u76EE\u5F55\u4E0B\u7B14\u8BB0\u7684\u90A3\u4E2A\u77E5\u8BC6\u5E93\u4E00\u7EA7\u9875\u9762\u7684\u540D\u79F0\uFF0C\u7559\u7A7A\u5219\u7528 vault \u7684\u540D\u5B57\uFF08\u5F53\u524D\uFF1A" + this.app.vault.getName() + "\uFF09").addText(
         (text) => text.setValue(settings.rootPageTitle).onChange(async (value) => {
           settings.rootPageTitle = value.trim();
           await this.host.saveSettings();
@@ -2351,20 +2440,20 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
     }
   }
   renderBehaviour(containerEl, settings) {
-    new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u884C\u4E3A").setHeading();
-    new import_obsidian4.Setting(containerEl).setName("\u9644\u4EF6\u76EE\u5F55").setDesc("\u6587\u6863\u6A21\u5F0F\u4E0B\u884C\u65F6\uFF0C\u4ECE\u98DE\u4E66\u4E0B\u8F7D\u7684\u56FE\u7247\u653E\u5230\u8FD9\u4E2A\u76EE\u5F55\uFF08\u76F8\u5BF9 vault \u6839\uFF0C\u586B attachments \u8FD9\u7C7B\u76F8\u5BF9\u8DEF\u5F84\uFF1B\u76EE\u5F55\u4E0D\u5B58\u5728\u4F1A\u81EA\u52A8\u521B\u5EFA\uFF09\u3002").addText(
+    new import_obsidian5.Setting(containerEl).setName("\u540C\u6B65\u884C\u4E3A").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u9644\u4EF6\u76EE\u5F55").setDesc("\u6587\u6863\u6A21\u5F0F\u4E0B\u884C\u65F6\uFF0C\u4ECE\u98DE\u4E66\u4E0B\u8F7D\u7684\u56FE\u7247\u653E\u5230\u8FD9\u4E2A\u76EE\u5F55\uFF08\u76F8\u5BF9 vault \u6839\uFF0C\u586B attachments \u8FD9\u7C7B\u76F8\u5BF9\u8DEF\u5F84\uFF1B\u76EE\u5F55\u4E0D\u5B58\u5728\u4F1A\u81EA\u52A8\u521B\u5EFA\uFF09\u3002").addText(
       (text) => text.setValue(settings.attachmentFolder).onChange(async (value) => {
         settings.attachmentFolder = value.trim() || "attachments";
         await this.host.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u9644\u4EF6\u94FE\u63A5\u5199\u6CD5").setDesc("\u4ECE\u98DE\u4E66\u4E0B\u8F7D\u56FE\u7247\u540E\uFF0C\u7B14\u8BB0\u91CC\u5F15\u7528\u5199\u6210\u54EA\u79CD\u5F62\u5F0F\u3002\u6700\u77ED\u8DEF\u5F84 = \u53EA\u5199\u6587\u4EF6\u540D\uFF08\u5982 ![[image-xxx.png]]\uFF0C\u4E0E Obsidian\u300C\u6700\u77ED\u8DEF\u5F84\u300D\u94FE\u63A5\u683C\u5F0F\u4E00\u81F4\uFF09\uFF1B\u5E26\u76EE\u5F55 = \u5199 ![[\u9644\u4EF6\u76EE\u5F55/\u6587\u4EF6\u540D]]\u3002").addDropdown(
+    new import_obsidian5.Setting(containerEl).setName("\u9644\u4EF6\u94FE\u63A5\u5199\u6CD5").setDesc("\u4ECE\u98DE\u4E66\u4E0B\u8F7D\u56FE\u7247\u540E\uFF0C\u7B14\u8BB0\u91CC\u5F15\u7528\u5199\u6210\u54EA\u79CD\u5F62\u5F0F\u3002\u6700\u77ED\u8DEF\u5F84 = \u53EA\u5199\u6587\u4EF6\u540D\uFF08\u5982 ![[image-xxx.png]]\uFF0C\u4E0E Obsidian\u300C\u6700\u77ED\u8DEF\u5F84\u300D\u94FE\u63A5\u683C\u5F0F\u4E00\u81F4\uFF09\uFF1B\u5E26\u76EE\u5F55 = \u5199 ![[\u9644\u4EF6\u76EE\u5F55/\u6587\u4EF6\u540D]]\u3002").addDropdown(
       (dropdown) => dropdown.addOption("shortest", "\u53EA\u5199\u6587\u4EF6\u540D\uFF08\u6700\u77ED\u8DEF\u5F84\uFF09").addOption("path", "\u5E26\u9644\u4EF6\u76EE\u5F55\u524D\u7F00").setValue(settings.attachmentLinkStyle).onChange(async (value) => {
         settings.attachmentLinkStyle = value;
         await this.host.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u76EE\u5F55\u5C42\u7EA7").setDesc("\u955C\u50CF\u76EE\u5F55\uFF1A\u4E3A\u6BCF\u4E2A\u672C\u5730\u6587\u4EF6\u5939\u5EFA\u4E00\u4E2A\u77E5\u8BC6\u5E93\u8282\u70B9\uFF08\u4F1A\u591A\u51FA\u4E00\u4E9B\u7A7A\u6587\u6863\u9875\uFF09\u3002\u6241\u5E73\uFF1A\u6240\u6709\u7B14\u8BB0\u6302\u5728\u6839\u8282\u70B9\u4E0B\uFF0C\u6587\u4EF6\u540D\u7528\u5206\u9694\u7B26\u7F16\u7801\u8DEF\u5F84\u3002").addDropdown(
+    new import_obsidian5.Setting(containerEl).setName("\u76EE\u5F55\u5C42\u7EA7").setDesc("\u955C\u50CF\u76EE\u5F55\uFF1A\u4E3A\u6BCF\u4E2A\u672C\u5730\u6587\u4EF6\u5939\u5EFA\u4E00\u4E2A\u77E5\u8BC6\u5E93\u8282\u70B9\uFF08\u4F1A\u591A\u51FA\u4E00\u4E9B\u7A7A\u6587\u6863\u9875\uFF09\u3002\u6241\u5E73\uFF1A\u6240\u6709\u7B14\u8BB0\u6302\u5728\u6839\u8282\u70B9\u4E0B\uFF0C\u6587\u4EF6\u540D\u7528\u5206\u9694\u7B26\u7F16\u7801\u8DEF\u5F84\u3002").addDropdown(
       (dropdown) => dropdown.addOption("nodes", "\u955C\u50CF\u76EE\u5F55\uFF08\u63A8\u8350\uFF09").addOption("flat", "\u6241\u5E73\u5316").setValue(settings.folderMode).onChange(async (value) => {
         settings.folderMode = value;
         await this.host.saveSettings();
@@ -2372,27 +2461,27 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       })
     );
     if (settings.folderMode === "flat") {
-      new import_obsidian4.Setting(containerEl).setName("\u6241\u5E73\u5206\u9694\u7B26").setDesc("\u7528\u8BE5\u5B57\u7B26\u4E32\u66FF\u6362\u8DEF\u5F84\u91CC\u7684 /").addText(
+      new import_obsidian5.Setting(containerEl).setName("\u6241\u5E73\u5206\u9694\u7B26").setDesc("\u7528\u8BE5\u5B57\u7B26\u4E32\u66FF\u6362\u8DEF\u5F84\u91CC\u7684 /").addText(
         (text) => text.setValue(settings.flatSeparator).onChange(async (value) => {
           settings.flatSeparator = value || "__";
           await this.host.saveSettings();
         })
       );
     }
-    new import_obsidian4.Setting(containerEl).setName("\u6392\u9664\u89C4\u5219").setDesc("\u6BCF\u884C\u4E00\u6761 glob\uFF0C\u652F\u6301 * \u4E0E **\u3002.obsidian/ \u4E0E .trash/ \u59CB\u7EC8\u6392\u9664\uFF0C\u51B2\u7A81\u526F\u672C\u76EE\u5F55\u4E5F\u59CB\u7EC8\u6392\u9664\u3002").addTextArea((area) => {
+    new import_obsidian5.Setting(containerEl).setName("\u6392\u9664\u89C4\u5219").setDesc("\u6BCF\u884C\u4E00\u6761 glob\uFF0C\u652F\u6301 * \u4E0E **\u3002.obsidian/ \u4E0E .trash/ \u59CB\u7EC8\u6392\u9664\uFF0C\u51B2\u7A81\u526F\u672C\u76EE\u5F55\u4E5F\u59CB\u7EC8\u6392\u9664\u3002").addTextArea((area) => {
       area.setValue(settings.excludePatterns).onChange(async (value) => {
         settings.excludePatterns = value;
         await this.host.saveSettings();
       });
       area.inputEl.rows = 4;
     });
-    new import_obsidian4.Setting(containerEl).setName("\u8FDC\u7AEF\u5DF2\u5220\u9664\u65F6\u81EA\u52A8\u91CD\u5EFA").setDesc("\u5173\u95ED\u65F6\uFF08\u63A8\u8350\uFF09\u53EA\u4F1A\u63D0\u793A\uFF0C\u4E0D\u4F1A\u628A\u672C\u5730\u6709\u4FEE\u6539\u7684\u7B14\u8BB0\u91CD\u65B0\u4F20\u4E0A\u53BB").addToggle(
+    new import_obsidian5.Setting(containerEl).setName("\u8FDC\u7AEF\u5DF2\u5220\u9664\u65F6\u81EA\u52A8\u91CD\u5EFA").setDesc("\u5173\u95ED\u65F6\uFF08\u63A8\u8350\uFF09\u53EA\u4F1A\u63D0\u793A\uFF0C\u4E0D\u4F1A\u628A\u672C\u5730\u6709\u4FEE\u6539\u7684\u7B14\u8BB0\u91CD\u65B0\u4F20\u4E0A\u53BB").addToggle(
       (toggle) => toggle.setValue(settings.recreateRemoteIfDeleted).onChange(async (value) => {
         settings.recreateRemoteIfDeleted = value;
         await this.host.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u672C\u5730\u7F3A\u5931\u65F6\u4ECE\u8FDC\u7AEF\u6062\u590D").setDesc("\u5F00\u542F\u540E\uFF0C\u672C\u5730\u6587\u4EF6\u88AB\u5220\u9664\u800C\u8FDC\u7AEF\u4ECD\u5B58\u5728\u65F6\uFF0C\u4F1A\u751F\u6210\u201C\u62C9\u53D6\u65B0\u5EFA\u201D\u4EE5\u6062\u590D\u8FDC\u7AEF\u6700\u65B0\u5185\u5BB9\uFF0C\u53EF\u7528\u201C\u4EC5\u62C9\u53D6\u201D\u6062\u590D\u3002\u5F00\u542F\u4F1A\u5173\u95ED\u201C\u672C\u5730\u5220\u9664\u540E\u540C\u65F6\u5220\u9664\u8FDC\u7AEF\u201D\u3002").addToggle(
+    new import_obsidian5.Setting(containerEl).setName("\u672C\u5730\u7F3A\u5931\u65F6\u4ECE\u8FDC\u7AEF\u6062\u590D").setDesc("\u5F00\u542F\u540E\uFF0C\u672C\u5730\u6587\u4EF6\u88AB\u5220\u9664\u800C\u8FDC\u7AEF\u4ECD\u5B58\u5728\u65F6\uFF0C\u4F1A\u751F\u6210\u201C\u62C9\u53D6\u65B0\u5EFA\u201D\u4EE5\u6062\u590D\u8FDC\u7AEF\u6700\u65B0\u5185\u5BB9\uFF0C\u53EF\u7528\u201C\u4EC5\u62C9\u53D6\u201D\u6062\u590D\u3002\u5F00\u542F\u4F1A\u5173\u95ED\u201C\u672C\u5730\u5220\u9664\u540E\u540C\u65F6\u5220\u9664\u8FDC\u7AEF\u201D\u3002").addToggle(
       (toggle) => toggle.setValue(settings.restoreLocalDeleted).onChange(async (value) => {
         settings.restoreLocalDeleted = value;
         if (value)
@@ -2401,7 +2490,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u6587\u6863\u6A21\u5F0F\uFF1A\u6BCF\u8F6E\u53D6\u56DE\u5168\u6587\u6821\u9A8C").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("\u6587\u6863\u6A21\u5F0F\uFF1A\u6BCF\u8F6E\u53D6\u56DE\u5168\u6587\u6821\u9A8C").setDesc(
       "\u5173\u95ED\uFF08\u9ED8\u8BA4\uFF09\uFF1A\u5148\u7528\u98DE\u4E66\u8FD4\u56DE\u7684\u300C\u6700\u540E\u4FEE\u6539\u65F6\u95F4\u300D\uFF08\u79D2\u7EA7\uFF09\u5224\u65AD\u8FDC\u7AEF\u6709\u6CA1\u6709\u53D8\uFF0C\u6CA1\u53D8\u5C31\u4E0D\u53D6\u56DE\u5168\u6587\uFF0C\u4E00\u8F6E\u53EA\u591A\u4E00\u6B21\u6279\u91CF\u5143\u6570\u636E\u8BF7\u6C42\u3002\u4EE3\u4EF7\u662F\u7406\u8BBA\u4E0A\u5B58\u5728\u6781\u7AEF\u60C5\u51B5\u2014\u2014\u540C\u4E00\u79D2\u5185\u7684\u8FDC\u7AEF\u6539\u52A8\u53EF\u80FD\u88AB\u6F0F\u5224\u5230\u4E0B\u4E00\u6B21\u65F6\u95F4\u6233\u53D8\u5316\u3002\u6253\u5F00\uFF1A\u5FFD\u7565\u65F6\u95F4\u6233\uFF0C\u6BCF\u8F6E\u5BF9\u6BCF\u7BC7\u5DF2\u8BB0\u5F55\u6587\u6863\u90FD\u53D6\u56DE\u5168\u6587\u9010\u7BC7\u6821\u9A8C\uFF0C\u6700\u7A33\uFF0C\u4F46\u8BF7\u6C42\u6570\u4E0E\u6D41\u91CF\u660E\u663E\u66F4\u9AD8\u3002"
     ).addToggle(
       (toggle) => toggle.setValue(settings.docVerifyRemoteByContent).onChange(async (value) => {
@@ -2409,12 +2498,12 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.host.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u5220\u9664\u4F20\u64AD\uFF08\u9ED8\u8BA4\u5173\u95ED\uFF09").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u5220\u9664\u4F20\u64AD\uFF08\u9ED8\u8BA4\u5173\u95ED\uFF09").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "\u4E24\u4E2A\u5F00\u5173\u90FD\u5173\u7740\u65F6\uFF0C\u4EFB\u4F55\u4E00\u8FB9\u5220\u9664\u90FD\u53EA\u5728\u540C\u6B65\u7ED3\u679C\u91CC\u63D0\u793A\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u5220\u53E6\u4E00\u8FB9\u3002\u6253\u5F00\u540E\u5220\u9664\u4F1A\u51FA\u73B0\u5728\u8BA1\u5212\u9884\u89C8\u7684\u72EC\u7ACB\u5206\u7EC4\u91CC\uFF0C\u9700\u8981\u4F60\u5728\u9884\u89C8\u6846\u91CC\u786E\u8BA4\u624D\u4F1A\u6267\u884C\u3002"
     });
-    new import_obsidian4.Setting(containerEl).setName("\u672C\u5730\u5220\u9664\u540E\u540C\u65F6\u5220\u9664\u8FDC\u7AEF").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("\u672C\u5730\u5220\u9664\u540E\u540C\u65F6\u5220\u9664\u8FDC\u7AEF").setDesc(
       "\u672C\u5730\u5220\u6389\u7684\u7B14\u8BB0\uFF0C\u540C\u6B65\u65F6\u628A\u8FDC\u7AEF\u5BF9\u5E94\u7684\u6587\u4EF6/\u6587\u6863\u4E00\u8D77\u5220\u6389\uFF08\u8D70\u4E91\u7A7A\u95F4\u63A5\u53E3\uFF0C\u5220\u9664\u8FDB\u98DE\u4E66\u56DE\u6536\u7AD9\uFF0C\u53EF\u4EE5\u6062\u590D\uFF09\u3002\u5F00\u542F\u4F1A\u5173\u95ED\u201C\u672C\u5730\u7F3A\u5931\u65F6\u4ECE\u8FDC\u7AEF\u6062\u590D\u201D\u3002\u8FDC\u7AEF\u81EA\u4E0A\u6B21\u540C\u6B65\u540E\u88AB\u6539\u8FC7\u3001\u6216\u8BE5\u8DEF\u5F84\u547D\u4E2D\u6392\u9664\u89C4\u5219\u65F6\uFF0C\u90FD\u4E0D\u4F1A\u5220\uFF0C\u4ECD\u7136\u6309\u51B2\u7A81/\u5FFD\u7565\u5904\u7406\u3002\u5220\u9664\u59CB\u7EC8\u9700\u8981\u624B\u52A8\u540C\u6B65\u786E\u8BA4\uFF1B\u5B9A\u65F6\u540C\u6B65\u53EA\u63D0\u793A\u5F85\u5220\u9664\u9879\u3002"
     ).addToggle(
       (toggle) => toggle.setValue(settings.propagateLocalDelete).onChange(async (value) => {
@@ -2425,7 +2514,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u8FDC\u7AEF\u5220\u9664\u540E\u540C\u65F6\u5220\u9664\u672C\u5730").setDesc(
+    new import_obsidian5.Setting(containerEl).setName("\u8FDC\u7AEF\u5220\u9664\u540E\u540C\u65F6\u5220\u9664\u672C\u5730").setDesc(
       "\u8FDC\u7AEF\u5220\u6389\u7684\u6587\u4EF6/\u6587\u6863\uFF0C\u540C\u6B65\u65F6\u628A\u672C\u5730\u7B14\u8BB0\u79FB\u8FDB vault \u7684 .trash\uFF08\u4E0D\u662F\u6C38\u4E45\u5220\u9664\uFF09\uFF0C\u5E76\u6E05\u6389\u6620\u5C04\u5173\u7CFB\u3002\u672C\u5730\u81EA\u4E0A\u6B21\u540C\u6B65\u540E\u88AB\u6539\u8FC7\u65F6\u4E0D\u4F1A\u5220\uFF0C\u53EA\u4F1A\u63D0\u793A\u3002\u6CE8\u610F\uFF1A\u8FD9\u6761\u4F1A\u771F\u7684\u52A8\u4F60\u672C\u5730\u7684\u6587\u4EF6\uFF0C\u540C\u6837\u4F1A\u5728\u8BA1\u5212\u9884\u89C8\u91CC\u5355\u72EC\u5217\u51FA\u7B49\u4F60\u786E\u8BA4\u3002"
     ).addToggle(
       (toggle) => toggle.setValue(settings.propagateRemoteDelete).onChange(async (value) => {
@@ -2433,13 +2522,13 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.host.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u540C\u6B65\u524D\u9884\u89C8\u8BA1\u5212").setDesc("\u6BCF\u6B21\u540C\u6B65\u5148\u5F39\u51FA\u8BA1\u5212\u786E\u8BA4\u6846").addToggle(
+    new import_obsidian5.Setting(containerEl).setName("\u540C\u6B65\u524D\u9884\u89C8\u8BA1\u5212").setDesc("\u6BCF\u6B21\u540C\u6B65\u5148\u5F39\u51FA\u8BA1\u5212\u786E\u8BA4\u6846").addToggle(
       (toggle) => toggle.setValue(settings.showPlanBeforeSync).onChange(async (value) => {
         settings.showPlanBeforeSync = value;
         await this.host.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u5B9A\u65F6\u68C0\u67E5\u66F4\u65B0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u5173\u95ED\uFF09").setDesc("\u5355\u4F4D\u5206\u949F\uFF0C0 \u8868\u793A\u5173\u95ED\u3002\u5230\u70B9\u53EA\u505A\u53EA\u8BFB\u63A2\u6D4B\uFF08\u76F8\u5F53\u4E8E git fetch\uFF09\uFF1A\u5728\u72B6\u6001\u680F\u6807\u8BB0\u54EA\u4E9B\u77E5\u8BC6\u5E93\u6709\u66F4\u65B0\uFF0C\u7EDD\u4E0D\u81EA\u52A8\u62C9\u53D6\u3002\u63A2\u6D4B\u8981\u904D\u5386\u5404\u77E5\u8BC6\u5E93\u7684\u76EE\u5F55\u6811\uFF0C\u77E5\u8BC6\u5E93\u591A\u65F6\u5EFA\u8BAE\u4FDD\u6301\u5173\u95ED\uFF0C\u7528\u77E5\u8BC6\u5E93\u9762\u677F\u91CC\u7684\u300C\u68C0\u67E5\u5168\u90E8\u66F4\u65B0\u300D\u6309\u94AE\u624B\u52A8\u68C0\u67E5\u3002").addText(
+    new import_obsidian5.Setting(containerEl).setName("\u5B9A\u65F6\u68C0\u67E5\u66F4\u65B0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u5173\u95ED\uFF09").setDesc("\u5355\u4F4D\u5206\u949F\uFF0C0 \u8868\u793A\u5173\u95ED\u3002\u5230\u70B9\u53EA\u505A\u53EA\u8BFB\u63A2\u6D4B\uFF08\u76F8\u5F53\u4E8E git fetch\uFF09\uFF1A\u5728\u72B6\u6001\u680F\u6807\u8BB0\u54EA\u4E9B\u77E5\u8BC6\u5E93\u6709\u66F4\u65B0\uFF0C\u7EDD\u4E0D\u81EA\u52A8\u62C9\u53D6\u3002\u63A2\u6D4B\u8981\u904D\u5386\u5404\u77E5\u8BC6\u5E93\u7684\u76EE\u5F55\u6811\uFF0C\u77E5\u8BC6\u5E93\u591A\u65F6\u5EFA\u8BAE\u4FDD\u6301\u5173\u95ED\uFF0C\u7528\u77E5\u8BC6\u5E93\u9762\u677F\u91CC\u7684\u300C\u68C0\u67E5\u5168\u90E8\u66F4\u65B0\u300D\u6309\u94AE\u624B\u52A8\u68C0\u67E5\u3002").addText(
       (text) => text.setValue(String(settings.autoSyncMinutes)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
         settings.autoSyncMinutes = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -2447,7 +2536,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         this.host.refreshAutoSync();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u8C03\u8BD5\u65E5\u5FD7").setDesc(`\u5199\u5165 .obsidian/feishu-sync/sync.log`).addToggle(
+    new import_obsidian5.Setting(containerEl).setName("\u8C03\u8BD5\u65E5\u5FD7").setDesc(`\u5199\u5165 .obsidian/feishu-sync/sync.log`).addToggle(
       (toggle) => toggle.setValue(settings.debugLog).onChange(async (value) => {
         settings.debugLog = value;
         await this.host.saveSettings();
@@ -2455,7 +2544,7 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
     );
   }
   renderState(containerEl, settings) {
-    new import_obsidian4.Setting(containerEl).setName("\u72B6\u6001").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u72B6\u6001").setHeading();
     const records = Object.keys(settings.syncMode === "doc" ? settings.state.docRecords : settings.state.records).length;
     const folders = Object.keys(settings.state.folders).length;
     containerEl.createEl("p", {
@@ -2466,19 +2555,19 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       cls: "setting-item-description",
       text: `\u51B2\u7A81\u526F\u672C\u76EE\u5F55\uFF1A${CONFLICT_DIR}/\uFF08\u672C\u5730\u4E0E\u8FDC\u7AEF\u90FD\u4E0D\u6539\u52A8\uFF0C\u526F\u672C\u4EC5\u4F5C\u53C2\u8003\uFF09`
     });
-    new import_obsidian4.Setting(containerEl).setName("\u6E05\u7A7A\u540C\u6B65\u72B6\u6001").setDesc("\u6E05\u6389\u4E24\u79CD\u6A21\u5F0F\u7684\u6620\u5C04\u3001\u56FE\u7247\u7F13\u5B58\u4E0E\u540C\u6B65\u65F6\u95F4\uFF0C\u4FDD\u7559\u8D26\u53F7\u3001\u89C4\u5219\u548C\u7B14\u8BB0\u3002\u4E0B\u6B21\u6309\u9996\u6B21\u5BF9\u63A5\u5224\u5B9A\uFF1B\u540C\u540D\u4F46\u5185\u5BB9\u4E0D\u540C\u4F1A\u62A5\u544A\u51B2\u7A81\u3002").addButton(
+    new import_obsidian5.Setting(containerEl).setName("\u6E05\u7A7A\u540C\u6B65\u72B6\u6001").setDesc("\u6E05\u6389\u4E24\u79CD\u6A21\u5F0F\u7684\u6620\u5C04\u3001\u56FE\u7247\u7F13\u5B58\u4E0E\u540C\u6B65\u65F6\u95F4\uFF0C\u4FDD\u7559\u8D26\u53F7\u3001\u89C4\u5219\u548C\u7B14\u8BB0\u3002\u4E0B\u6B21\u6309\u9996\u6B21\u5BF9\u63A5\u5224\u5B9A\uFF1B\u540C\u540D\u4F46\u5185\u5BB9\u4E0D\u540C\u4F1A\u62A5\u544A\u51B2\u7A81\u3002").addButton(
       (button) => button.setWarning().setButtonText("\u6E05\u7A7A").onClick(async () => {
         if (this.host.isSyncBusy()) {
-          new import_obsidian4.Notice("\u540C\u6B65\u6B63\u5728\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u6E05\u7A7A\u72B6\u6001");
+          new import_obsidian5.Notice("\u540C\u6B65\u6B63\u5728\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u6E05\u7A7A\u72B6\u6001");
           return;
         }
         settings.state = emptyState();
         await this.host.saveSettings();
-        new import_obsidian4.Notice("\u540C\u6B65\u72B6\u6001\u5DF2\u6E05\u7A7A");
+        new import_obsidian5.Notice("\u540C\u6B65\u72B6\u6001\u5DF2\u6E05\u7A7A");
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("\u5DF2\u77E5\u8FB9\u754C").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("\u5DF2\u77E5\u8FB9\u754C").setHeading();
     const list = containerEl.createEl("ul", { cls: "setting-item-description" });
     list.createEl("li", { text: "\u98DE\u4E66\u4E0D\u63A5\u53D7 0 \u5B57\u8282 Markdown\uFF0C\u7A7A\u6587\u4EF6\u5728\u6587\u4EF6\u955C\u50CF\u6A21\u5F0F\u4E0B\u4F1A\u88AB\u8DF3\u8FC7\u5E76\u63D0\u793A\uFF1B\u6587\u6863\u6A21\u5F0F\u4E0B\u7A7A\u7B14\u8BB0\u4E5F\u4F1A\u540C\u6B65\uFF08\u6B63\u6587\u4E3A\u7A7A\uFF0C\u98DE\u4E66\u4FA7\u53EA\u6709\u6807\u9898\uFF09\u3002" });
     list.createEl("li", { text: "\u6587\u6863\u6A21\u5F0F\u4F1A\u4E0A\u4F20\u672C\u5730\u56FE\u7247\uFF08\u5199\u8FDB\u6587\u6863\u7684\u56FE\u7247\u5757\uFF09\u5E76\u4E0B\u8F7D\u98DE\u4E66\u91CC\u7684\u56FE\u7247\u5230\u9644\u4EF6\u76EE\u5F55\uFF1B\u89C4\u5219\u6587\u4EF6\u91CC image-upload / image-download \u53EF\u5173\u3002\u6587\u4EF6\u955C\u50CF\u6A21\u5F0F\u4E0D\u505A\u56FE\u7247\u5904\u7406\uFF0C\u56FE\u7247\u53EA\u662F\u7B14\u8BB0\u91CC\u7684\u6587\u672C\u3002" });
@@ -2492,90 +2581,6 @@ var FeishuWikiSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
 var import_crypto = require("crypto");
 var import_obsidian6 = require("obsidian");
 init_types();
-
-// src/sync/scanner.ts
-var import_obsidian5 = require("obsidian");
-init_types();
-var ALWAYS_EXCLUDED = [".obsidian/**", ".trash/**", `${CONFLICT_DIR}/**`, "**/.DS_Store"];
-function assertSafeVaultPath(relPath) {
-  if (!relPath || /[\\\x00-\x1f:]/.test(relPath) || relPath.split("/").some((part) => !part || part === "." || part === "..")) {
-    throw new Error(`\u65E0\u6548\u7684\u4ED3\u5E93\u76F8\u5BF9\u8DEF\u5F84\uFF1A${relPath}`);
-  }
-}
-function globToRegExp(pattern) {
-  let source = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const char = pattern[index];
-    if (char === "*") {
-      if (pattern[index + 1] === "*") {
-        if (pattern[index + 2] === "/") {
-          source += "(?:.*/)?";
-          index += 2;
-        } else {
-          source += ".*";
-          index += 1;
-        }
-      } else {
-        source += "[^/]*";
-      }
-    } else if (char === "?") {
-      source += "[^/]";
-    } else if ("\\^$.|+()[]{}".includes(char)) {
-      source += `\\${char}`;
-    } else {
-      source += char;
-    }
-  }
-  return new RegExp(`${source}$`);
-}
-var PathFilter = class {
-  constructor(userPatterns) {
-    const raw = userPatterns.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line) => line.endsWith("/") ? `${line}**` : line).map((line) => line.replace(/^\.\//, "").replace(/^\//, ""));
-    this.patterns = [...ALWAYS_EXCLUDED, ...raw].map(globToRegExp);
-  }
-  isExcluded(relPath) {
-    return this.patterns.some((pattern) => pattern.test(relPath));
-  }
-};
-function scanLocalNotes(app, filter, localFolder = "") {
-  const notes = /* @__PURE__ */ new Map();
-  const prefix = localFolder ? `${localFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")}/` : "";
-  for (const file of app.vault.getMarkdownFiles()) {
-    if (prefix && !file.path.startsWith(prefix))
-      continue;
-    if (filter.isExcluded(file.path))
-      continue;
-    const stat = file.stat;
-    notes.set(file.path, { relPath: file.path, size: stat?.size ?? 0, mtime: stat?.mtime ?? 0 });
-  }
-  return notes;
-}
-async function readLocalBytes(app, relPath) {
-  const file = app.vault.getAbstractFileByPath(relPath);
-  if (!(file instanceof import_obsidian5.TFile)) {
-    throw new Error(`\u627E\u4E0D\u5230\u672C\u5730\u6587\u4EF6\uFF1A${relPath}`);
-  }
-  return app.vault.readBinary(file);
-}
-function localStat(app, relPath) {
-  const file = app.vault.getAbstractFileByPath(relPath);
-  if (!(file instanceof import_obsidian5.TFile))
-    return { size: 0, mtime: 0 };
-  return { size: file.stat?.size ?? 0, mtime: file.stat?.mtime ?? 0 };
-}
-async function writeLocalBytes(app, relPath, data) {
-  assertSafeVaultPath(relPath);
-  const existing = app.vault.getAbstractFileByPath(relPath);
-  if (existing instanceof import_obsidian5.TFile) {
-    await app.vault.modifyBinary(existing, data);
-    return;
-  }
-  const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
-  if (dir && !app.vault.getAbstractFileByPath(dir)) {
-    await app.vault.createFolder(dir).catch(() => void 0);
-  }
-  await app.vault.createBinary(relPath, data);
-}
 
 // src/feishu/wiki.ts
 var PAGE_SIZE = 50;
@@ -2651,7 +2656,7 @@ async function walkWikiTree(client, spaceId, rootNodeToken, options = {}) {
       throw new Error(`\u77E5\u8BC6\u5E93\u76EE\u5F55\u8D85\u8FC7 ${MAX_DEPTH} \u5C42\uFF0C\u8BF7\u9009\u62E9\u66F4\u5C0F\u7684\u540C\u6B65\u6839\u8282\u70B9\uFF1B\u672A\u6267\u884C\u540C\u6B65`);
     const nodes = await listNodes(client, spaceId, current.nodeToken);
     for (const node of nodes) {
-      const title = (node.title ?? "").trim();
+      const title = sanitizeVaultSegment((node.title ?? "").trim());
       if (node.node_type === "shortcut")
         continue;
       if (visited.has(node.node_token))
@@ -4125,7 +4130,7 @@ function isEmptyDocumentMarkdown(text, title) {
   if (title) {
     const first = body.split("\n", 1)[0] ?? "";
     const heading = /^#\s+(.*?)\s*$/.exec(first);
-    if (heading && heading[1] === title.trim()) {
+    if (heading && sanitizeVaultSegment(heading[1].trim()) === sanitizeVaultSegment(title.trim())) {
       const rest = body.split("\n").slice(1).join("\n").trim();
       if (rest.length === 0)
         return true;
@@ -5359,7 +5364,7 @@ var DocSyncEngine = class {
         objToken: resolvedRoot.objToken,
         objType: resolvedRoot.objType,
         parentNodeToken: resolvedRoot.parentNodeToken,
-        title: resolvedRoot.title,
+        title: sanitizeVaultSegment(resolvedRoot.title),
         relDir: "",
         depth: 0
       } : void 0;

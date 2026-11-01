@@ -1,4 +1,4 @@
-import { assertSafeVaultPath } from "./scanner";
+import { assertSafeVaultPath, sanitizeVaultSegment } from "./scanner";
 import type { RulesFile } from "../convert/rules";
 import { applyRules, normalizeImagesForCompare, publishRulesFingerprint, pullRulesFingerprint, ruleEnabled, sourceFormatWarnings } from "../convert/rules";
 import type { WikiTreeEntry } from "../feishu/wiki";
@@ -197,7 +197,8 @@ export function isEmptyDocumentMarkdown(text: string, title?: string): boolean {
   if (title) {
     const first = body.split("\n", 1)[0] ?? "";
     const heading = /^#\s+(.*?)\s*$/.exec(first);
-    if (heading && heading[1] === title.trim()) {
+    // 二开：标题在路径里被净化过（如英文冒号→全角），远端 H1 仍是原始形态，两边按净化后口径比较
+    if (heading && sanitizeVaultSegment(heading[1].trim()) === sanitizeVaultSegment(title.trim())) {
       const rest = body
         .split("\n")
         .slice(1)

@@ -1,5 +1,6 @@
 import type { FeishuClient } from "./client";
 import { pathSegment } from "./client";
+import { sanitizeVaultSegment } from "../sync/scanner";
 
 export interface WikiSpace {
   space_id: string;
@@ -140,7 +141,9 @@ export async function walkWikiTree(
     if (current.depth > MAX_DEPTH) throw new Error(`知识库目录超过 ${MAX_DEPTH} 层，请选择更小的同步根节点；未执行同步`);
     const nodes = await listNodes(client, spaceId, current.nodeToken);
     for (const node of nodes) {
-      const title = (node.title ?? "").trim();
+      // 二开：页面标题可能含 Windows 非法文件名字符（英文冒号等），在唯一咽喉点净化，
+      // 标题、子级目录链、笔记文件名一起合法化；否则一篇标题带冒号的笔记会中止整次同步
+      const title = sanitizeVaultSegment((node.title ?? "").trim());
       // 快捷方式指向别处已有的节点，跟着递归会把同一篇笔记重复算进不同路径
       if (node.node_type === "shortcut") continue;
       if (visited.has(node.node_token)) continue;

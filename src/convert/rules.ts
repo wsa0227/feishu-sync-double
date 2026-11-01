@@ -4,6 +4,7 @@ import { newImageMarker } from "../feishu/docImages";
 import type { Logger } from "../log";
 import { ensureFolder } from "../log";
 import { codeLineMask, decodeXmlText, escapedAt, mapMath, mapNativeMath, mathSpans, trimInlineMathBody } from "./markdown";
+import { sanitizeVaultSegment } from "../sync/scanner";
 
 /**
  * 文档模式的可编辑转换规则。规则本身是纯函数（字符串进、字符串出），
@@ -306,9 +307,13 @@ const dropTitleHeading: BuiltInRule = {
     if (!title) return input;
     const heading = `# ${title}`;
     const xmlTitle = /^<title>([\s\S]*?)<\/title>(?:\r?\n)?(?:\r?\n)?/.exec(input);
-    if (xmlTitle && decodeXmlText(xmlTitle[1]).trim() === title) return input.slice(xmlTitle[0].length);
+    // 二开：标题在文件名里可能被净化（英文冒号→全角），远端 H1/<title> 仍是原始形态，
+    // 按净化后口径比较，避免首行标题残留进笔记正文。
+    const sameTitle = (value: string): boolean => sanitizeVaultSegment(decodeXmlText(value).trim()) === sanitizeVaultSegment(title);
+    if (xmlTitle && sameTitle(xmlTitle[1])) return input.slice(xmlTitle[0].length);
     const lines = input.split("\n");
-    if ((lines[0] ?? "").trim() !== heading) return input;
+    const firstHeading = /^#\s+(.*?)\s*$/.exec((lines[0] ?? "").trim());
+    if (!firstHeading || !sameTitle(firstHeading[1])) return input;
     if ((ctx.localContent.split("\n")[0] ?? "").trim() === heading) return input;
     const rest = lines.slice(1);
     if (rest.length > 0 && rest[0].trim() === "") rest.shift();

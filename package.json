@@ -1,6 +1,6 @@
 {
   "name": "feishu-sync-double",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "license": "MIT",
   "description": "Obsidian plugin for bidirectional sync with Feishu Wiki documents and Markdown files",
   "private": true,
