@@ -218,4 +218,6 @@ npm run install:vault -- "/完整路径/你的仓库"
 
 本项目采用 [MIT License](LICENSE)，是独立社区插件，与 Obsidian、飞书或 Lark 无官方隶属关系。
 
+LINUX DO(https://linux.do) —— 真诚分享、友好讨论的技术社区，本项目的交流与反馈也发布于此
+
 本仓库基于 [chenqaq123/ObsidianSync](https://github.com/chenqaq123/ObsidianSync)（MIT）二次开发，继承其许可证与版权声明，感谢上游作者的工作。飞书文档和图片接口实现参考了 [Lark CLI](https://github.com/larksuite/cli) 的请求格式与素材处理流程；上游版权及许可见 [第三方声明](THIRD_PARTY_NOTICES.md)，声明同时保留在发布的 `main.js` 中。构建工具和类型声明不打入插件运行文件。
