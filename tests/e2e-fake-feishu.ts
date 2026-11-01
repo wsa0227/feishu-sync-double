@@ -259,6 +259,8 @@ class FakeFeishu {
   readonly media = new Map<string, { bytes: Buffer; fileName: string }>();
   /** 置 true 后素材下载返回 403，用来验证"下载失败保留引用、不中断拉取" */
   rejectMediaDownload = false;
+  /** 置 true 后素材预览端点（preview_download）也返回 403，验证两条路都不通时的兜底语义 */
+  rejectMediaPreview = false;
   /** 置 true 后图片 URL 里不带素材 token，逼客户端走文档块顺序兜底 */
   docImagePlainUrl = false;
   /** 置 true 后 drive/v1/metas/batch_query 返回错误，用来验证"元数据失败退回逐篇取回" */
@@ -1030,7 +1032,16 @@ class FakeFeishu {
     return this.ok({});
   }
 
-  private previewDownload(token: string): RequestUrlResponse {    const entry = this.files.get(token);
+  private previewDownload(token: string): RequestUrlResponse {
+    // 二开：素材下载 403 时客户端会兜底调用 preview_download，这里按 media 池返回原图字节
+    const mediaEntry = this.media.get(token);
+    if (mediaEntry) {
+      if (this.rejectMediaPreview) return this.fail(403, 1061002, "假服务器模拟素材预览被拒");
+      const lower = mediaEntry.fileName.toLowerCase();
+      const contentType = lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg" : lower.endsWith(".svg") ? "image/svg+xml" : "image/png";
+      return { status: 200, headers: { "content-type": contentType }, text: "", arrayBuffer: toArrayBuffer(mediaEntry.bytes) };
+    }
+    const entry = this.files.get(token);
     if (!entry) return this.fail(404, 1061002, `未知 file_token：${token}`);
     if (this.emptyDownloadTokens.has(token)) {
       // 模拟网关返回 200 + 0 字节
@@ -3291,30 +3302,53 @@ async function main(): Promise<void> {
     return "image-upload=false：引用原样作为文本发出，0 次素材上传";
   });
 
-  await scenario("45 图片下行：素材下载失败时保留引用、不中断拉取", async () => {
+  await scenario("45 图片下行：下载被拒时自动兜底预览端点（社区库素材无下载权限）", async () => {
     imgFake.rejectMediaDownload = true;
-    const remoteToken = imgFake.insertRemoteImage(imageDocId, { caption: "下载会失败的图", bytes: PIXEL_PNG, fileName: "fail.png" });
+    // 用唯一字节内容，避免与本地已有附件哈希一致而触发「内容一致复用」路径
+    const uniqueBytes = Buffer.concat([PIXEL_PNG, Buffer.from("preview-fallback")]);
+    const remoteToken = imgFake.insertRemoteImage(imageDocId, { caption: "无下载权限的图", bytes: uniqueBytes, fileName: "noperm.png" });
+
+    const { result, delta } = await runDocRound(ih, "图片第 8 轮：下载被拒，预览兜底");
+    eq(result.plan.counts.pull ?? 0, 1, "pull 数量");
+    eq(result.report.filter((item) => !item.ok).length, 0, "兜底成功时 pull 不该有失败");
+    eq(delta.mediaDownload, 1, "download 被拒 1 次后转预览");
+    const local = readVaultFile("图笔记.md", imgRoot);
+    ok(local.includes(`image-${remoteToken.slice(-8)}.png`), `应通过预览兜底下载并改写成本地引用：${local}`);
+    ok(fs.existsSync(path.join(imgRoot, "attachments", `image-${remoteToken.slice(-8)}.png`)), "预览兜底下载的附件应落盘");
+    for (const name of [...local.matchAll(/!\[\[attachments\/([^\]]+)\]\]/g)].map((match) => match[1])) {
+      ok(fs.existsSync(path.join(imgRoot, "attachments", name)), `本地引用的附件必须真实存在：${name}`);
+    }
+    ok(!local.includes(`medias/${remoteToken}/download`), `原始远程引用应已被替换：${local}`);
+
+    const next = await runDocRound(ih, "图片第 9 轮：兜底成功后重跑");
+    eq(nonSkipCount(next.result.plan), 0, "成功后按基线 skip");
+    eq(next.delta.mediaDownload, 0, "未变化时不该再尝试下载");
+
+    return "download 403 → preview_download 兜底成功：原图落盘、引用改写，pull 正常";
+  });
+
+  await scenario("45b 图片下行：下载与预览都被拒时保留引用、不中断拉取", async () => {
+    imgFake.rejectMediaPreview = true;
+    const remoteToken = imgFake.insertRemoteImage(imageDocId, { caption: "两条路都失败的图", bytes: PIXEL_PNG, fileName: "fail.png" });
     const before = fs.readdirSync(path.join(imgRoot, "attachments")).length;
 
-    const { result, delta } = await runDocRound(ih, "图片第 8 轮：远端插图但下载被拒");
+    const { result, delta } = await runDocRound(ih, "图片第 8b 轮：下载与预览都被拒");
     eq(result.plan.counts.pull ?? 0, 1, "pull 数量");
     eq(result.report.filter((item) => !item.ok).length, 0, "下载失败不该让 pull 变成失败");
     eq(delta.mediaDownload, 1, "尝试下载 1 次");
     const local = readVaultFile("图笔记.md", imgRoot);
-    ok(local.includes(`medias/${remoteToken}/download`), `下载失败的那张图应保留远程引用：${local}`);
+    ok(local.includes(`medias/${remoteToken}/download`), `两条路都失败的那张图应保留远程引用：${local}`);
     eq(fs.readdirSync(path.join(imgRoot, "attachments")).length, before, "附件目录不该新增文件");
-    for (const name of [...local.matchAll(/!\[\[attachments\/([^\]]+)\]\]/g)].map((match) => match[1])) {
-      ok(fs.existsSync(path.join(imgRoot, "attachments", name)), `本地引用的附件必须真实存在：${name}`);
-    }
     const entry = result.report.find((item) => item.relPath === "图笔记.md");
     ok((entry?.message ?? "").includes("下载失败"), `报告要说明下载失败：${entry?.message ?? ""}`);
     ok((entry?.message ?? "").includes(remoteToken), "报告里应带上素材 token 便于排查");
 
-    const next = await runDocRound(ih, "图片第 9 轮：下载失败后重跑");
+    const next = await runDocRound(ih, "图片第 9b 轮：全失败后重跑");
     eq(nonSkipCount(next.result.plan), 0, "失败后仍按基线判为 skip（远端变化时才会重试）");
     eq(next.delta.mediaDownload, 0, "未变化时不该再尝试下载");
 
-    return "下载被拒：本地保留远程引用、附件不落盘、pull 仍算成功，报告写明原因";
+    imgFake.rejectMediaPreview = false;
+    return "download+preview 都被拒：本地保留远程引用、附件不落盘、pull 仍算成功，报告写明原因";
   });
 
   await scenario("46 图片下行：取回 URL 不带素材 token 时按文档图片块顺序兜底", async () => {

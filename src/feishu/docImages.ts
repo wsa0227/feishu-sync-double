@@ -205,9 +205,31 @@ export async function listDocImageBlocks(client: FeishuClient, documentId: strin
 }
 
 export async function downloadDocMedia(client: FeishuClient, fileToken: string): Promise<{ bytes: ArrayBuffer; contentType?: string }> {
-  const response = await client.binaryResponse(`/open-apis/drive/v1/medias/${pathSegment(fileToken)}/download`);
-  if (response.data.byteLength === 0) {
-    throw new FeishuError(`素材 ${fileToken} 下载得到 0 字节，已放弃`, { endpoint: `/open-apis/drive/v1/medias/${fileToken}/download` });
+  const endpoint = `/open-apis/drive/v1/medias/${pathSegment(fileToken)}/download`;
+  let downloadError: unknown;
+  try {
+    const response = await client.binaryResponse(endpoint);
+    if (response.data.byteLength === 0) {
+      throw new FeishuError(`素材 ${fileToken} 下载得到 0 字节，已放弃`, { endpoint });
+    }
+    return { bytes: response.data, contentType: response.contentType };
+  } catch (error) {
+    downloadError = error;
   }
-  return { bytes: response.data, contentType: response.contentType };
+  // 二开：社区共享知识库常把素材文件的下载/导出权限关掉——文档能读，drive download 却 403。
+  // 官方预览端点按「阅读」权限放行（实测 preview_type=16 返回与浏览器一致的原图字节），
+  // 这里兜底走预览；预览也失败时抛出原始下载错误，保持原有失败语义（警告后保留引用）。
+  try {
+    const preview = await client.binaryResponse(`/open-apis/drive/v1/medias/${pathSegment(fileToken)}/preview_download`, {
+      preview_type: 16,
+    });
+    if (preview.data.byteLength === 0) {
+      throw new FeishuError(`素材 ${fileToken} 预览兜底得到 0 字节，已放弃`, {
+        endpoint: `/open-apis/drive/v1/medias/${fileToken}/preview_download`,
+      });
+    }
+    return { bytes: preview.data, contentType: preview.contentType };
+  } catch {
+    throw downloadError;
+  }
 }

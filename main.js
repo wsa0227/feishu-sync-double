@@ -1178,11 +1178,30 @@ async function listDocImageBlocks(client, documentId) {
   return blocks;
 }
 async function downloadDocMedia(client, fileToken) {
-  const response = await client.binaryResponse(`/open-apis/drive/v1/medias/${pathSegment(fileToken)}/download`);
-  if (response.data.byteLength === 0) {
-    throw new FeishuError(`\u7D20\u6750 ${fileToken} \u4E0B\u8F7D\u5F97\u5230 0 \u5B57\u8282\uFF0C\u5DF2\u653E\u5F03`, { endpoint: `/open-apis/drive/v1/medias/${fileToken}/download` });
+  const endpoint = `/open-apis/drive/v1/medias/${pathSegment(fileToken)}/download`;
+  let downloadError;
+  try {
+    const response = await client.binaryResponse(endpoint);
+    if (response.data.byteLength === 0) {
+      throw new FeishuError(`\u7D20\u6750 ${fileToken} \u4E0B\u8F7D\u5F97\u5230 0 \u5B57\u8282\uFF0C\u5DF2\u653E\u5F03`, { endpoint });
+    }
+    return { bytes: response.data, contentType: response.contentType };
+  } catch (error) {
+    downloadError = error;
   }
-  return { bytes: response.data, contentType: response.contentType };
+  try {
+    const preview = await client.binaryResponse(`/open-apis/drive/v1/medias/${pathSegment(fileToken)}/preview_download`, {
+      preview_type: 16
+    });
+    if (preview.data.byteLength === 0) {
+      throw new FeishuError(`\u7D20\u6750 ${fileToken} \u9884\u89C8\u515C\u5E95\u5F97\u5230 0 \u5B57\u8282\uFF0C\u5DF2\u653E\u5F03`, {
+        endpoint: `/open-apis/drive/v1/medias/${fileToken}/preview_download`
+      });
+    }
+    return { bytes: preview.data, contentType: preview.contentType };
+  } catch {
+    throw downloadError;
+  }
 }
 
 // src/convert/markdown.ts

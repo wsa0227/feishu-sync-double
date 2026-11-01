@@ -5,3 +5,5 @@ dist/
 *.tsbuildinfo
 .local-backups/
 步骤图片/
+
+*.har
