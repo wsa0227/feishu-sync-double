@@ -17,13 +17,12 @@ Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 
 **90 秒快速了解**——飞书知识库没有批量导出？能看，就能搬走：
 
-![90 秒教程：飞书知识库搬进 Obsidian](docs/videos/feishu-wiki-sync-90s-tutorial.mp4)
+![90 秒教程：飞书知识库搬进 Obsidian](https://github.com/user-attachments/assets/8d39816b-fe5e-46bf-9a88-695905ed23e0)
 
 **完整保姆级教程**（安装 → 创建飞书自建应用 → 授权 → 添加知识库 → 拉取 → 检查更新，含字幕）：
 
-![Obsidian 插件完整教程](docs/videos/obsidian-plugin-tutorial.mp4)
+![Obsidian 插件完整教程](https://github.com/user-attachments/assets/563744e6-f246-4ca3-a06d-8418954060c4)
 
-> 字幕文件：[中文字幕.srt](步骤图片/视频教程/成片/中文字幕.srt)。GitHub 网页播放器不加载外挂字幕，需要字幕时下载后用本地播放器打开。
 
 ## 为什么做这件事
 
