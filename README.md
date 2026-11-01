@@ -5,7 +5,7 @@
 
 将 Obsidian 仓库中的 Markdown 笔记与飞书知识库双向同步。当前维护版 **0.2.2**；[本仓库下载](https://github.com/wsa0227/feishu-sync-double/releases)。
 
-仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入。上游版本已上架 Obsidian 社区插件市场；本二开版本以独立 ID `feishu-sync-double` 提交上架中。
+仅支持 **Obsidian 桌面版 1.13.7 及以上**，连接中国版飞书（`open.feishu.cn`）。当前不包含 Notion、飞书多维表格或国际版 Lark 接入。本二开版本已上架 **Obsidian 社区插件市场**（独立 ID：`feishu-sync-double`），插件内直接搜索安装。
 
 ## English
 
@@ -66,6 +66,7 @@ Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 - 单篇 `/docx/` 文档：拉取、图片本地化、callout/cite 转换、更新跟进
 - 三档位方向控制（仅拉取/双向/仅推送）加误推拦截
 - 设置页分组：授权等一次性配置收进抽屉，授权失效一键重授权
+- 已上架 Obsidian 社区插件市场：插件内搜索 **Feishu Wiki Sync Double** 直接安装，更新自动推送
 - `0.2.2` 已发布 [Release](https://github.com/wsa0227/feishu-sync-double/releases)
 
 还没做的：
@@ -73,7 +74,6 @@ Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 - 表格、多维表格、PDF 附件等内容**仍不同步**（会提示数量，但内容下不来）
 - 单篇模式只支持新版文档 `/docx/`，旧版 doc 和表格链接不行
 - 冲突没有解决界面：副本生成后要自己在文件层面合并
-- 未上架 Obsidian 社区插件市场，装插件靠手动
 
 ## 使用步骤
 
@@ -81,7 +81,7 @@ Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 
 快速上手：
 
-1. 从 [Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载 `feishu-sync-double-0.2.2.zip`，解压到 `.obsidian/plugins/`，启用插件
+1. Obsidian 里 **设置 → 第三方插件 → 浏览**，搜 **Feishu Wiki Sync Double**，安装并启用（也可从 [Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载 zip 手动装）
 2. 在飞书开放平台建一个自建应用并授权（一次性，约 5-10 分钟）
 3. 点右下角状态栏 → **添加知识库** → 粘贴链接
 
@@ -126,7 +126,11 @@ Full illustrated guide: [docs/使用步骤.md](docs/使用步骤.md) (Chinese).
 
 ## 安装
 
-### 使用构建好的安装包
+### 方式一：从 Obsidian 插件市场安装（推荐）
+
+打开 Obsidian 的 **设置 → 第三方插件 → 浏览**，搜索 **Feishu Wiki Sync Double**，安装并启用。之后的更新会随插件市场自动推送。
+
+### 方式二：手动安装构建包
 
 从 [本仓库 Releases](https://github.com/wsa0227/feishu-sync-double/releases) 下载最新版本（当前 `0.2.2`）：
 
